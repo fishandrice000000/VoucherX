@@ -71,7 +71,7 @@ public class SeckillOrderConsumer {
         try {
             OrderPersistResult result = orderPersistenceService.persist(message);
             statusStore.markSuccess(message.requestId(), message.messageId(), result.orderId());
-            log.info("秒杀订单处理成功，requestId={}, messageId={}, orderId={}, created={}",
+            log.debug("秒杀订单处理成功，requestId={}, messageId={}, orderId={}, created={}",
                     message.requestId(), message.messageId(), result.orderId(), result.created());
             channel.basicAck(deliveryTag, false);
         } catch (OrderBusinessException ex) {

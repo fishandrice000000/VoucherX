@@ -70,9 +70,9 @@ voucherx:
     lock-wait-millis: 3000
   seckill:
     publish-confirm-timeout-millis: 5000
-    # ACK 与 mandatory return 回调可能由不同线程调度，ACK 后短暂等待 return 以正确识别路由失败。
-    return-grace-millis: 100
     request-status-ttl-seconds: 86400
+    # MySQL BUCKET 模式单次消费最多尝试的桶数，避免无限遍历。
+    bucket-attempts: 3
   mq:
     max-retries: 3
     retry-ttl-millis: 5000

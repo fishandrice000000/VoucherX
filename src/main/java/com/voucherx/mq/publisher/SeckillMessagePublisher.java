@@ -16,15 +16,17 @@ import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 秒杀消息发布器。只有 Broker ACK 且消息可路由时才返回 CONFIRMED。
+ * 秒杀消息发布器。只有 Broker ACK 且 mandatory 消息成功路由时才返回 CONFIRMED。
+ *
+ * Spring AMQP 3.1.7 的 PublisherCallbackChannelImpl 会在处理 Confirm 前等待
+ * mandatory return 回调完成（最多 60 秒），并把 ReturnedMessage 写入 CorrelationData。
+ * 因此这里不需要再额外 sleep，也不会把 Return 等待误记为 Redis 耗时。
  */
 @Component
 public class SeckillMessagePublisher {
@@ -34,7 +36,6 @@ public class SeckillMessagePublisher {
     private final RabbitTemplate rabbitTemplate;
     private final ObjectMapper objectMapper;
     private final SeckillProperties properties;
-    private final Map<String, VoucherCorrelationData> pending = new ConcurrentHashMap<>();
 
     public SeckillMessagePublisher(RabbitTemplate rabbitTemplate,
                                    ObjectMapper objectMapper,
@@ -42,18 +43,10 @@ public class SeckillMessagePublisher {
         this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
-        this.rabbitTemplate.setReturnsCallback(returned -> {
-            // Spring AMQP 将 CorrelationData ID 写入该内部 Header，而不是标准的 correlationId。
-            Object correlation = returned.getMessage().getMessageProperties().getHeaders()
-                    .get("spring_returned_message_correlation");
-            String correlationId = correlation == null ? null : correlation.toString();
-            VoucherCorrelationData data = correlationId == null ? null : pending.get(correlationId);
-            if (data != null) {
-                data.markReturned(returned.getReplyText());
-            }
-            log.error("秒杀消息不可路由，exchange={}, routingKey={}, reply={}",
-                    returned.getExchange(), returned.getRoutingKey(), returned.getReplyText());
-        });
+        // 仅用于记录不可路由消息；CorrelationData.returned 由 Spring AMQP 维护。
+        this.rabbitTemplate.setReturnsCallback(returned ->
+                log.error("秒杀消息不可路由，exchange={}, routingKey={}, reply={}",
+                        returned.getExchange(), returned.getRoutingKey(), returned.getReplyText()));
     }
 
     public PublishResult publish(SeckillOrderMessage message) {
@@ -68,26 +61,21 @@ public class SeckillMessagePublisher {
 
     private PublishResult publishInternal(SeckillOrderMessage message, String exchange,
                                           String routingKey, int retryCount) {
-        VoucherCorrelationData correlationData =
-                new VoucherCorrelationData(UUID.randomUUID().toString());
-        pending.put(correlationData.getId(), correlationData);
+        CorrelationData correlationData = new CorrelationData(UUID.randomUUID().toString());
 
         Message amqpMessage;
         try {
             amqpMessage = buildMessage(message, retryCount);
         } catch (JsonProcessingException ex) {
-            pending.remove(correlationData.getId());
             throw new IllegalStateException("秒杀消息序列化失败", ex);
         }
 
         try {
             rabbitTemplate.send(exchange, routingKey, amqpMessage, correlationData);
         } catch (AmqpConnectException ex) {
-            pending.remove(correlationData.getId());
             log.error("RabbitMQ 连接失败，消息确定未发送，requestId={}", message.requestId(), ex);
             return PublishResult.NOT_SENT;
         } catch (AmqpException ex) {
-            pending.remove(correlationData.getId());
             log.error("RabbitMQ 发送异常，发布结果无法确定，requestId={}", message.requestId(), ex);
             return PublishResult.UNKNOWN;
         }
@@ -98,10 +86,7 @@ public class SeckillMessagePublisher {
             if (!confirm.isAck()) {
                 return PublishResult.NACKED;
             }
-            if (!correlationData.isReturned()) {
-                correlationData.awaitReturn(properties.returnGraceMillis());
-            }
-            if (correlationData.isReturned()) {
+            if (correlationData.getReturned() != null) {
                 return PublishResult.RETURNED;
             }
             return PublishResult.CONFIRMED;
@@ -115,8 +100,6 @@ public class SeckillMessagePublisher {
         } catch (ExecutionException ex) {
             log.warn("等待 RabbitMQ 发布确认失败，requestId={}", message.requestId(), ex);
             return PublishResult.UNKNOWN;
-        } finally {
-            pending.remove(correlationData.getId());
         }
     }
 

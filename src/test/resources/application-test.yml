@@ -15,7 +15,7 @@ voucherx:
     retry-ttl-millis: 800
   seckill:
     publish-confirm-timeout-millis: 5000
-    return-grace-millis: 100
+    bucket-attempts: 3
 
 logging:
   level:

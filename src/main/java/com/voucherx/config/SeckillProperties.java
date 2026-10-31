@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "voucherx.seckill")
 public record SeckillProperties(
         long publishConfirmTimeoutMillis,
-        long returnGraceMillis,
-        long requestStatusTtlSeconds
+        long requestStatusTtlSeconds,
+        int bucketAttempts
 ) {
 }

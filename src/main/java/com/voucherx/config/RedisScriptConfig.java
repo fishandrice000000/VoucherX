@@ -34,6 +34,11 @@ public class RedisScriptConfig {
         return script("lua/seckill_release.lua");
     }
 
+    @Bean
+    public DefaultRedisScript<Long> seckillRequestStatusScript() {
+        return script("lua/seckill_request_status.lua");
+    }
+
     private DefaultRedisScript<Long> script(String classpath) {
         try {
             ClassPathResource resource = new ClassPathResource(classpath);

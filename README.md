@@ -4,6 +4,8 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 
 当前仓库已完成 **V1 基线**：手机号验证码登录、商户缓存查询、Redis Lua + RabbitMQ + MySQL 的优惠券秒杀链路，以及使用 Testcontainers 验证的自动化测试。
 
+在此基础上完成了 **技术深化 01 的 MySQL 库存桶模式**：通过可复现压测确认 MySQL 单库存行在 8 消费者下存在锁竞争，按活动显式启用 128 桶布局后通过容量、延迟、归因与重复性门槛。Redis 侧未发现热点，因此**没有实现 Redis 库存分片**。
+
 ## 技术栈
 
 - Java 21、Spring Boot 3.3.5、Maven。
@@ -19,8 +21,9 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 | 用户登录 | 手机号验证码登录、Redis 验证码、随机 Token、登录拦截器、登录态续期、请求结束清理用户上下文、验证码手机号冷却与 IP 频率限制 |
 | 商户查询 | 按 ID 查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建与安全释放锁 |
 | 优惠券秒杀 | Redis Lua 原子预扣、一人一单、RabbitMQ 异步下单、Publisher Confirm、mandatory 路由失败处理、手动 ACK、有界重试、死信队列、MySQL 条件扣库存与唯一约束、异步结果查询 |
+| MySQL 库存桶（方向 01） | 活动级 `SINGLE / BUCKET` 模式、128 桶布局、固定起始桶与有界跨桶尝试、实际桶写入订单、桶布局初始化与兼容迁移 |
 
-V1 不包含支付、核销、Redis Stream、Kafka/RocketMQ、库存分片、自适应限流、批量落库、自动化对账或补偿中心。
+V1 不包含支付、核销、Redis Stream、Kafka/RocketMQ、Redis 库存分片、自适应限流、批量落库、自动化对账或补偿中心。MySQL 库存桶仅对显式配置的新活动启用，已有活动继续使用 `SINGLE`。
 
 ## 核心链路
 
@@ -31,7 +34,7 @@ V1 不包含支付、核销、Redis Stream、Kafka/RocketMQ、库存分片、自
               └─> Redis Lua：检查库存 + 检查用户资格 + 扣库存 + 占资格 + 写请求状态
                     └─> RabbitMQ Publisher Confirm + mandatory return
                           └─> 手动 ACK Consumer
-                                └─> MySQL 事务：条件扣库存 + 创建订单
+                                └─> MySQL 事务：SINGLE 扣活动库存 / BUCKET 扣实际桶 + 创建订单
                                       └─> 提交成功后 ACK
                                             └─> GET /api/seckill/requests/{requestId} 查询结果
 ```
@@ -56,6 +59,15 @@ Compose 端口特意避开常见的 `3306 / 6379 / 5672`：
 | RabbitMQ 管理台 | `15673`（voucherx / voucherx） |
 
 MySQL 首次启动时会执行 `src/main/resources/db/schema.sql` 和 `seed.sql`，创建一个演示商户与一场 100 库存的秒杀活动。
+
+已有 V1 数据库升级到桶模式支持时，执行一次：
+
+```bash
+docker compose exec -T mysql mysql -uvoucherx -pvoucherx voucherx \
+  < src/main/resources/db/migration/02-mysql-buckets.sql
+```
+
+迁移脚本只应执行一次；新环境直接使用 `schema.sql`。
 
 ### 2. 启动应用
 
@@ -140,13 +152,13 @@ mvn test
 ```text
 AuthIntegrationTest                 4 passed
 ShopCacheIntegrationTest            4 passed
-SeckillIntegrationTest             11 passed
+SeckillIntegrationTest             20 passed
 SeckillConsumerReliabilityTest      2 passed
 ------------------------------------------------
-合计                               21 passed, 0 failed, 0 skipped
+合计                               30 passed, 0 failed, 0 skipped
 ```
 
-测试覆盖登录、缓存、秒杀时间/库存/一人一单、1000 用户争抢 100 张券、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询等。详见 [测试说明](docs/v1/testing.md)。
+测试覆盖登录、缓存、秒杀时间/库存/一人一单、SINGLE 与 BUCKET 两种模式下 1000 用户争抢 100 张券、桶额度除不尽、局部售罄、布局不匹配、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询等。详见 [测试说明](docs/v1/testing.md) 与 [方向 01 测试说明](docs/01/testing-01.md)。
 
 ## 关键设计
 
@@ -155,7 +167,9 @@ SeckillConsumerReliabilityTest      2 passed
 - **消息成功定义**：只有 Publisher Confirm 为 ACK 且 mandatory 消息成功路由，才算投递成功。
 - **ACK 时机**：消费者仅在 MySQL 事务提交成功、或确认是已处理过的重复消息后 ACK；业务失败与重试耗尽进入明确处理路径。
 - **状态查询**：先查 MySQL 已提交订单，再参考 Redis 过程状态；不会把未知状态报告成成功或失败。
-- **库存初始化**：应用启动时只对“无历史订单且数据库库存仍为初始总库存”的活动做 `SETNX` 初始化；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。
+- **库存初始化**：应用启动时只对“无历史订单且数据库库存仍为初始总库存”的活动做 `SETNX` 初始化；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。BUCKET 模式按桶额度和校验布局后初始化。
+- **MySQL 桶模式**：用户稳定路由到起始桶 `userId % bucketCount`，消费者有界尝试后续桶；实际扣减桶写入订单。Redis 仍为单库存 Key，桶模式只解决数据库库存行热点。
+- **发布与状态**：发布器依赖 Spring AMQP 的 `CorrelationData.getReturned()` 判定 mandatory 路由失败，不再额外等待 100ms；请求状态使用条件 Lua 转移，迟到状态不能覆盖 `SUCCESS / FAILED / RELEASED`。
 
 ## 目录结构
 
@@ -172,14 +186,33 @@ src/main/java/com/voucherx/
 
 src/main/resources/
 ├── application.yml
-├── db/          # MySQL 表结构与演示数据
-└── lua/         # 秒杀预扣/释放、验证码、缓存锁脚本
+├── db/          # MySQL 表结构、演示数据、增量迁移
+└── lua/         # 秒杀预扣/释放/状态、验证码、缓存锁脚本
 
 src/test/java/com/voucherx/
 ├── auth/        # 登录集成测试
 ├── shop/        # 缓存集成测试
-└── seckill/     # 秒杀、并发、消息可靠性测试
+└── seckill/     # 秒杀、并发、分桶与消息可靠性测试
+
+bench/            # 压测客户端、数据准备、快照、采样与结果汇总脚本
 ```
+
+## 方向 01 压测摘要
+
+在隔离 Docker 环境中，单应用实例、8 个消费者、MySQL 单实例、Redis 单实例，固定 200k 用户与 1,000,000 库存，开环 400 req/s、30s 预热 + 120s 测量、3 次重复，比较单库存与 128 桶模式：
+
+| 指标（中位数） | SINGLE | BUCKET 128 | 结论 |
+| --- | ---: | ---: | --- |
+| 成功订单 TPS | 232.35 | 398.38 | +71.5% |
+| HTTP P99 | 17ms | 18ms | +5.9%，在 10% 门槛内 |
+| 订单端到端 P99 | 98.3s | 1.03s | 明显改善 |
+| MySQL 库存行锁等待 | 59,999 | 0 | 热点同步消失 |
+| RabbitMQ 最大积压 | 25,233 | 162 |  backlog 收敛 |
+| 库存守恒 | 1,000,000 | 1,000,000 | 通过 |
+
+补充 200 req/s 共同可持续速率对照：两者 HTTP P99 中位数均为 11ms，端到端 P99 分别约 1.02s 与 1.01s，未观察到桶模式延迟退化。倾斜流量（全部用户起始桶为 0）的 14,000 次请求也保持不超发、不重复和守恒，但发生跨桶切换与更高的行锁等待，单独记录在方向 01 文档中。
+
+该结果只代表当前单机开发环境与给定负载，不构成生产容量或线性扩展承诺；Redis 分片未启用，完整环境、命令、原始数据与限制见 [方向 01 文档目录](docs/01/README.md)。
 
 ## 文档
 
@@ -195,6 +228,11 @@ src/test/java/com/voucherx/
 - [已知限制](docs/v1/known-limitations.md)
 - [后续演进](docs/v1/future-evolution.md)
 - [技术深化方向](docs/technical-directions.md)
+- [方向 01 文档目录](docs/01/README.md)
+- [方向 01 设计](docs/01/design-01.md)
+- [方向 01 压测](docs/01/benchmark-01.md)
+- [方向 01 测试](docs/01/testing-01.md)
+- [方向 01 限制](docs/01/limitations-01.md)
 - [Git 提交规范](docs/git-conventions.md)
 
 ## 开发约定

@@ -1,76 +1,201 @@
 # VoucherX
 
-VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权益平台，以并发处理、异步消息、事务一致性和故障恢复为主要技术研究对象。
+VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权益平台。V1 以经典「黑马点评」优惠券秒杀语义为蓝本，重点实践并发控制、异步消息、事务一致性和可验证的故障边界。
 
-## 当前状态
+当前仓库已完成 **V1 基线**：手机号验证码登录、商户缓存查询、Redis Lua + RabbitMQ + MySQL 的优惠券秒杀链路，以及使用 Testcontainers 验证的自动化测试。
 
-项目处于需求与规范准备阶段，尚未实现应用代码、构建配置和自动化测试。以下功能与技术方案均为 V1 计划范围。
+## 技术栈
 
-工程建立并实际验证后，将补充环境搭建、启动方式、接口使用和测试命令。
+- Java 21、Spring Boot 3.3.5、Maven。
+- MySQL 8、MyBatis-Plus 3.5.9。
+- Redis 7、RabbitMQ 3.13、Spring AMQP。
+- JUnit 5、Spring Boot Test、Testcontainers 1.21.4、Awaitility。
+- 模块化单体，不使用 Spring Cloud，不拆分微服务。
 
-## 技术栈与架构
+## V1 已实现功能
 
-- Java 21、Spring Boot 3.x、Maven。
-- MySQL 8、MyBatis-Plus。
-- Redis 7、RabbitMQ、Spring AMQP。
-- JUnit 5、Spring Boot Test、Testcontainers、Docker Compose。
-
-采用模块化单体架构，不拆分微服务。
-
-## V1 业务范围
-
-| 模块 | 计划内容 |
+| 模块 | 已实现内容 |
 | --- | --- |
-| 用户登录 | 手机号验证码登录、Redis 登录态、Token 校验与登录态续期、基础防滥用保护 |
-| 商户查询与缓存 | 商户详情查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建 |
-| 优惠券秒杀 | Redis Lua 原子预扣、RabbitMQ 异步下单、MySQL 事务持久化、异步结果查询 |
+| 用户登录 | 手机号验证码登录、Redis 验证码、随机 Token、登录拦截器、登录态续期、请求结束清理用户上下文、验证码手机号冷却与 IP 频率限制 |
+| 商户查询 | 按 ID 查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建与安全释放锁 |
+| 优惠券秒杀 | Redis Lua 原子预扣、一人一单、RabbitMQ 异步下单、Publisher Confirm、mandatory 路由失败处理、手动 ACK、有界重试、死信队列、MySQL 条件扣库存与唯一约束、异步结果查询 |
 
-秒杀业务沿用黑马点评的优惠券抢购语义：用户抢购成功后创建秒杀订单，暂不实现后续支付及优惠券核销。
+V1 不包含支付、核销、Redis Stream、Kafka/RocketMQ、库存分片、自适应限流、批量落库、自动化对账或补偿中心。
 
-### 核心秒杀链路
-
-```text
-用户请求 → Redis Lua 原子预扣 → RabbitMQ 消息投递 → Consumer 消费 → MySQL 事务创建订单
-```
-
-用户通过异步结果查询获取处理状态，查询应优先尊重 MySQL 中已经确定的业务终态。
-
-计划通过 Lua 保证 Redis 库存预扣与用户资格占用的原子性，通过 MySQL 条件扣库存、活动与用户组合唯一约束及事务保证最终防超卖和一人一单。
-
-RabbitMQ 计划提供持久化消息、Publisher Confirm、路由失败处理、手动 ACK、幂等消费、有界重试和死信隔离。
-
-Redis 预扣与 RabbitMQ 发布是独立操作，不具备天然的事务一致性。发布确认结果不明时，不能直接释放库存；Redis 预扣成功但发布前宕机等问题，V1 需要明确记录其可靠性边界，完整对账与恢复留待后续版本。
-
-## 范围边界与后续方向
-
-V1 使用 RabbitMQ 替代 Redis Stream，不引入其他消息队列、Spring Cloud、完整支付核销、运营后台或复杂补偿中心。
-
-后续按实际瓶颈与验证结果，逐步研究以下方向，V1 不提前实现：
-
-1. 高并发发券与热点库存分片。
-2. 多级限流与自适应背压。
-3. 可靠异步发券与批量处理。
-4. 完整订单与优惠券核销链路。
-5. 自动化一致性对账与补偿。
-6. 故障恢复及验证体系。
-
-## 当前目录与文档入口
+## 核心链路
 
 ```text
-VoucherX/
-├── AGENTS.md       # 项目协作与文档维护规范
-├── README.md       # 项目概览
-├── .gitignore      # Git 忽略规则
-└── docs/           # 本地需求与规范文档，不纳入 Git
+客户端
+  └─> POST /api/seckill/vouchers/{voucherId}
+        └─> 校验活动时间
+              └─> Redis Lua：检查库存 + 检查用户资格 + 扣库存 + 占资格 + 写请求状态
+                    └─> RabbitMQ Publisher Confirm + mandatory return
+                          └─> 手动 ACK Consumer
+                                └─> MySQL 事务：条件扣库存 + 创建订单
+                                      └─> 提交成功后 ACK
+                                            └─> GET /api/seckill/requests/{requestId} 查询结果
 ```
 
-`docs/` 当前仅保留在本地，以下链接依赖本地文档存在，从 Git 克隆的仓库不包含这些文档：
+Redis 预扣和 RabbitMQ 发布不是一个原子操作。明确发布失败时会幂等释放预扣；发布确认超时等未知状态不会盲目释放库存。详见 [秒杀链路](docs/v1/seckill-flow.md) 与 [已知限制](docs/v1/known-limitations.md)。
+
+## 快速启动
+
+### 1. 启动基础设施
+
+```bash
+docker compose up -d
+```
+
+Compose 端口特意避开常见的 `3306 / 6379 / 5672`：
+
+| 服务 | 宿主机端口 |
+| --- | --- |
+| MySQL 8 | `3307` |
+| Redis 7 | `6380` |
+| RabbitMQ AMQP | `5673` |
+| RabbitMQ 管理台 | `15673`（voucherx / voucherx） |
+
+MySQL 首次启动时会执行 `src/main/resources/db/schema.sql` 和 `seed.sql`，创建一个演示商户与一场 100 库存的秒杀活动。
+
+### 2. 启动应用
+
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+mvn spring-boot:run
+```
+
+默认地址为 `http://localhost:8080`。`AUTH_EXPOSE_CODE=true` 只用于本地开发，会把模拟验证码返回在接口响应中；生产环境必须保持为 `false`。
+
+也可以先打包后运行：
+
+```bash
+mvn -DskipTests package
+java -jar target/voucherx-0.1.0-SNAPSHOT.jar
+```
+
+### 3. 手工验证
+
+```bash
+# 商户查询（公开接口）
+curl http://localhost:8080/api/shops/1
+
+# 发送验证码（本地开发会返回 code）
+curl -X POST http://localhost:8080/api/auth/code \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"13900000001"}'
+
+# 登录，替换 <code>
+curl -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"13900000001","code":"<code>"}'
+
+# 秒杀，替换 <token>
+curl -i -X POST http://localhost:8080/api/seckill/vouchers/1 \
+  -H 'Authorization: Bearer <token>'
+
+# 查询异步结果，替换 <token> 和 <requestId>
+curl http://localhost:8080/api/seckill/requests/<requestId> \
+  -H 'Authorization: Bearer <token>'
+```
+
+## 接口概览
+
+| 方法 | 路径 | 认证 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/code` | 否 | 发送模拟验证码，带手机号冷却与 IP 限流 |
+| `POST` | `/api/auth/login` | 否 | 验证码登录，返回随机 Token |
+| `GET` | `/api/auth/me` | 是 | 查询当前用户，并刷新 Token TTL |
+| `POST` | `/api/auth/logout` | 是 | 删除登录态 |
+| `GET` | `/api/shops/{shopId}` | 否 | 查询商户详情，使用 Redis 缓存 |
+| `POST` | `/api/seckill/vouchers/{voucherId}` | 是 | 受理秒杀请求，返回 `202` 与 `requestId` |
+| `GET` | `/api/seckill/requests/{requestId}` | 是 | 查询异步处理状态，仅请求所有者可查 |
+
+异步状态：
+
+- `PROCESSING`：请求已受理，消息已确认进入 RabbitMQ，MySQL 尚未给出最终结果。
+- `SUCCESS`：MySQL 已存在已提交的订单，返回 `orderId`。
+- `FAILED`：已确定失败的请求，例如数据库库存不足、重复用户、重试耗尽。
+- `UNKNOWN`：发布确认超时等暂时无法确定的状态，不能据此判断成功或失败。
+- 未受理的请求（活动未开始、库存不足、Redis 预扣失败、明确发布失败）直接返回同步错误，不进入异步状态查询。
+
+统一响应格式：
+
+```json
+{"code":0,"message":"OK","data":{}}
+```
+
+业务错误同时使用合适的 HTTP 状态码与稳定的业务 `code`。
+
+## 测试
+
+```bash
+mvn test
+```
+
+测试使用 Testcontainers 启动真实 MySQL 8、Redis 7 和 RabbitMQ 3.13，不使用 Mock 替代核心中间件。最近一次执行结果：
+
+```text
+AuthIntegrationTest                 3 passed
+ShopCacheIntegrationTest            4 passed
+SeckillIntegrationTest             11 passed
+SeckillConsumerReliabilityTest      2 passed
+------------------------------------------------
+合计                               20 passed, 0 failed, 0 skipped
+```
+
+测试覆盖登录、缓存、秒杀时间/库存/一人一单、1000 用户争抢 100 张券、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询等。详见 [测试说明](docs/v1/testing.md)。
+
+## 关键设计
+
+- **Redis 预扣**：Lua 脚本集中管理，原子完成库存检查、资格占用、扣库存和请求状态写入。
+- **MySQL 最终防线**：`UPDATE ... WHERE stock > 0` 加条件扣库存；`(voucher_id, user_id)` 唯一约束保证一人一单；`request_id` 唯一约束保证请求幂等。
+- **消息成功定义**：只有 Publisher Confirm 为 ACK 且 mandatory 消息成功路由，才算投递成功。
+- **ACK 时机**：消费者仅在 MySQL 事务提交成功、或确认是已处理过的重复消息后 ACK；业务失败与重试耗尽进入明确处理路径。
+- **状态查询**：先查 MySQL 已提交订单，再参考 Redis 过程状态；不会把未知状态报告成成功或失败。
+- **库存初始化**：应用启动时只对“无历史订单且数据库库存仍为初始总库存”的活动做 `SETNX` 初始化；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。
+
+## 目录结构
+
+```text
+src/main/java/com/voucherx/
+├── auth/        # 验证码、登录、Token 拦截器、用户上下文
+├── shop/        # 商户查询与 Cache Aside 缓存
+├── seckill/     # 秒杀编排、Redis Lua 预扣、请求状态
+├── voucher/     # 优惠券与秒杀活动模型
+├── order/       # MySQL 订单事务与幂等
+├── mq/          # RabbitMQ 拓扑、发布器、消费者
+├── common/      # 统一响应、错误码、Redis Key
+└── config/      # 配置属性、拦截器注册、Lua 脚本注册
+
+src/main/resources/
+├── application.yml
+├── db/          # MySQL 表结构与演示数据
+└── lua/         # 秒杀预扣/释放、验证码、缓存锁脚本
+
+src/test/java/com/voucherx/
+├── auth/        # 登录集成测试
+├── shop/        # 缓存集成测试
+└── seckill/     # 秒杀、并发、消息可靠性测试
+```
+
+## 文档
+
+`docs/` 按项目约定仅保留在本地，不纳入 Git；从 Git 克隆的仓库不包含这些文件。
 
 - [文档目录](docs/README.md)
-- [Git 提交规范](docs/git-conventions.md)
-- [技术深化方向](docs/technical-directions.md)
 - [V1 文档目录](docs/v1/README.md)
-- [V1 任务说明](docs/v1/task-v1.md)
+- [架构说明](docs/v1/architecture.md)
+- [数据模型](docs/v1/data-model.md)
+- [秒杀链路](docs/v1/seckill-flow.md)
+- [RabbitMQ 可靠性](docs/v1/rabbitmq-reliability.md)
+- [测试说明](docs/v1/testing.md)
+- [已知限制](docs/v1/known-limitations.md)
+- [后续演进](docs/v1/future-evolution.md)
+- [技术深化方向](docs/technical-directions.md)
+- [Git 提交规范](docs/git-conventions.md)
 
 ## 开发约定
 

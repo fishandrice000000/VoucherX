@@ -1,0 +1,29 @@
+# 本地需求与规范文档
+docs/
+
+# Maven 构建产物
+target/
+
+# IDE 本地配置
+.idea/
+*.iml
+.vscode/
+
+# 日志与临时文件
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+*~
+
+# 本地环境变量，保留可提交的配置示例
+.env
+.env.*
+!.env.example
+
+# 操作系统生成文件
+.DS_Store
+Thumbs.db

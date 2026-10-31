@@ -1,0 +1,23 @@
+spring:
+  rabbitmq:
+    # 测试中缩短重试等待，避免集成测试过慢；生产配置仍为 5 秒。
+    listener:
+      simple:
+        concurrency: 1
+        max-concurrency: 1
+
+voucherx:
+  auth:
+    expose-code: true
+    code-cooldown-seconds: 1
+  mq:
+    max-retries: 2
+    retry-ttl-millis: 800
+  seckill:
+    publish-confirm-timeout-millis: 5000
+    return-grace-millis: 100
+
+logging:
+  level:
+    root: WARN
+    com.voucherx: WARN

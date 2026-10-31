@@ -138,12 +138,12 @@ mvn test
 测试使用 Testcontainers 启动真实 MySQL 8、Redis 7 和 RabbitMQ 3.13，不使用 Mock 替代核心中间件。最近一次执行结果：
 
 ```text
-AuthIntegrationTest                 3 passed
+AuthIntegrationTest                 4 passed
 ShopCacheIntegrationTest            4 passed
 SeckillIntegrationTest             11 passed
 SeckillConsumerReliabilityTest      2 passed
 ------------------------------------------------
-合计                               20 passed, 0 failed, 0 skipped
+合计                               21 passed, 0 failed, 0 skipped
 ```
 
 测试覆盖登录、缓存、秒杀时间/库存/一人一单、1000 用户争抢 100 张券、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询等。详见 [测试说明](docs/v1/testing.md)。

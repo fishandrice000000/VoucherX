@@ -91,6 +91,21 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void ipBurstIsLimited() throws Exception {
+        for (int i = 1; i <= 10; i++) {
+            sendCode(String.format("137%08d", i));
+        }
+
+        mockMvc.perform(post("/api/auth/code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"phone":"13700000011"}
+                                """))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value(42910));
+    }
+
+    @Test
     void unauthorizedRequestAndCodeAbuseAreBlocked() throws Exception {
         mockMvc.perform(get("/api/auth/me"))
                 .andExpect(status().isUnauthorized())

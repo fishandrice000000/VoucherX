@@ -49,24 +49,43 @@ CREATE TABLE IF NOT EXISTS tb_voucher (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '优惠券';
 
 CREATE TABLE IF NOT EXISTS tb_seckill_voucher (
-    voucher_id   BIGINT   NOT NULL COMMENT '优惠券 ID',
-    total_stock  INT      NOT NULL COMMENT '活动总库存',
-    stock        INT      NOT NULL COMMENT '剩余库存，MySQL 为最终权威',
-    begin_time   DATETIME NOT NULL COMMENT '秒杀开始时间',
-    end_time     DATETIME NOT NULL COMMENT '秒杀结束时间',
-    create_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    update_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    voucher_id     BIGINT      NOT NULL COMMENT '优惠券 ID',
+    total_stock    INT         NOT NULL COMMENT '活动总库存',
+    stock          INT         NOT NULL COMMENT '单库存模式剩余库存；BUCKET 模式下不使用该字段作为权威剩余库存',
+    stock_mode     VARCHAR(16) NOT NULL DEFAULT 'SINGLE' COMMENT 'SINGLE 或 BUCKET',
+    bucket_count   INT         NOT NULL DEFAULT 1 COMMENT 'MySQL 库存桶数量，SINGLE 固定为 1',
+    layout_version INT         NOT NULL DEFAULT 1 COMMENT '库存布局版本',
+    begin_time     DATETIME    NOT NULL COMMENT '秒杀开始时间',
+    end_time       DATETIME    NOT NULL COMMENT '秒杀结束时间',
+    create_time    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (voucher_id),
     CONSTRAINT chk_seckill_stock CHECK (stock >= 0 AND stock <= total_stock)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '秒杀活动库存';
 
+CREATE TABLE IF NOT EXISTS tb_seckill_voucher_bucket (
+    voucher_id      BIGINT NOT NULL COMMENT '优惠券 ID',
+    bucket_no       INT    NOT NULL COMMENT '桶编号，从 0 开始',
+    total_stock     INT    NOT NULL COMMENT '桶初始额度',
+    remaining_stock INT    NOT NULL COMMENT '桶剩余额度，BUCKET 模式的权威库存',
+    layout_version  INT    NOT NULL COMMENT '布局版本',
+    create_time     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (voucher_id, bucket_no),
+    KEY idx_bucket_layout (voucher_id, layout_version),
+    CONSTRAINT chk_bucket_stock CHECK (remaining_stock >= 0 AND remaining_stock <= total_stock)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '秒杀 MySQL 库存桶';
+
 CREATE TABLE IF NOT EXISTS tb_voucher_order (
     id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '订单 ID',
     request_id  VARCHAR(36) NOT NULL COMMENT '一次秒杀请求 ID，用于幂等与状态追踪',
-    message_id  VARCHAR(36) NOT NULL COMMENT 'RabbitMQ 消息 ID，用于链路追踪',
-    user_id     BIGINT      NOT NULL COMMENT '用户 ID',
-    voucher_id  BIGINT      NOT NULL COMMENT '优惠券 ID',
-    status      TINYINT     NOT NULL DEFAULT 1 COMMENT '1 已创建',
+    message_id     VARCHAR(36) NOT NULL COMMENT 'RabbitMQ 消息 ID，用于链路追踪',
+    user_id        BIGINT      NOT NULL COMMENT '用户 ID',
+    voucher_id     BIGINT      NOT NULL COMMENT '优惠券 ID',
+    stock_mode     VARCHAR(16) NOT NULL DEFAULT 'SINGLE' COMMENT '下单时库存模式',
+    bucket_no      INT         NOT NULL DEFAULT 0 COMMENT '实际扣减的 MySQL 桶编号',
+    layout_version INT         NOT NULL DEFAULT 1 COMMENT '下单时库存布局版本',
+    status         TINYINT     NOT NULL DEFAULT 1 COMMENT '1 已创建',
     create_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),

@@ -17,6 +17,9 @@ public class VoucherOrder {
     private String messageId;
     private Long userId;
     private Long voucherId;
+    private String stockMode;
+    private Integer bucketNo;
+    private Integer layoutVersion;
     private Integer status;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
@@ -59,6 +62,30 @@ public class VoucherOrder {
 
     public void setVoucherId(Long voucherId) {
         this.voucherId = voucherId;
+    }
+
+    public String getStockMode() {
+        return stockMode;
+    }
+
+    public void setStockMode(String stockMode) {
+        this.stockMode = stockMode;
+    }
+
+    public Integer getBucketNo() {
+        return bucketNo;
+    }
+
+    public void setBucketNo(Integer bucketNo) {
+        this.bucketNo = bucketNo;
+    }
+
+    public Integer getLayoutVersion() {
+        return layoutVersion;
+    }
+
+    public void setLayoutVersion(Integer layoutVersion) {
+        this.layoutVersion = layoutVersion;
     }
 
     public Integer getStatus() {

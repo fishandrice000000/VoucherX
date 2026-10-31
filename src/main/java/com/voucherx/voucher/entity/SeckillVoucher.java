@@ -12,6 +12,9 @@ public class SeckillVoucher {
     private Long voucherId;
     private Integer totalStock;
     private Integer stock;
+    private String stockMode;
+    private Integer bucketCount;
+    private Integer layoutVersion;
     private LocalDateTime beginTime;
     private LocalDateTime endTime;
     private LocalDateTime createTime;
@@ -39,6 +42,30 @@ public class SeckillVoucher {
 
     public void setStock(Integer stock) {
         this.stock = stock;
+    }
+
+    public String getStockMode() {
+        return stockMode;
+    }
+
+    public void setStockMode(String stockMode) {
+        this.stockMode = stockMode;
+    }
+
+    public Integer getBucketCount() {
+        return bucketCount;
+    }
+
+    public void setBucketCount(Integer bucketCount) {
+        this.bucketCount = bucketCount;
+    }
+
+    public Integer getLayoutVersion() {
+        return layoutVersion;
+    }
+
+    public void setLayoutVersion(Integer layoutVersion) {
+        this.layoutVersion = layoutVersion;
     }
 
     public LocalDateTime getBeginTime() {

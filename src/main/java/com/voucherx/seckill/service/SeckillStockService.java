@@ -38,7 +38,8 @@ public class SeckillStockService {
      * 返回 >=0 表示预扣后的剩余库存；负数含义见 Lua 脚本注释。
      */
     public long reserve(Long voucherId, Long userId, String requestId,
-                        long nowMillis, long beginMillis, long endMillis) {
+                        long nowMillis, long beginMillis, long endMillis,
+                        String stockMode, int startBucketNo, int layoutVersion) {
         try {
             Long result = redisTemplate.execute(
                     seckillReserveScript,
@@ -50,7 +51,10 @@ public class SeckillStockService {
                     String.valueOf(nowMillis),
                     String.valueOf(beginMillis),
                     String.valueOf(endMillis),
-                    String.valueOf(voucherId)
+                    String.valueOf(voucherId),
+                    stockMode,
+                    String.valueOf(startBucketNo),
+                    String.valueOf(layoutVersion)
             );
             if (result == null) {
                 throw new BusinessException(ErrorCode.SECKILL_STOCK_UNAVAILABLE);

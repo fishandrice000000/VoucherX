@@ -78,6 +78,7 @@ public abstract class AbstractIntegrationTest {
     void cleanInfrastructureState() {
         purgeQueues();
         jdbcTemplate.update("DELETE FROM tb_voucher_order");
+        jdbcTemplate.update("DELETE FROM tb_seckill_voucher_bucket");
         jdbcTemplate.update("DELETE FROM tb_seckill_voucher");
         jdbcTemplate.update("DELETE FROM tb_voucher");
         jdbcTemplate.update("DELETE FROM tb_shop");
@@ -115,9 +116,42 @@ public abstract class AbstractIntegrationTest {
                 voucherId, "测试秒杀券-" + voucherId);
         jdbcTemplate.update("""
                         INSERT INTO tb_seckill_voucher
-                            (voucher_id, total_stock, stock, begin_time, end_time)
-                        VALUES (?, ?, ?, ?, ?)
+                            (voucher_id, total_stock, stock, stock_mode, bucket_count,
+                             layout_version, begin_time, end_time)
+                        VALUES (?, ?, ?, 'SINGLE', 1, 1, ?, ?)
                         """,
                 voucherId, totalStock, stock, begin, end);
+    }
+
+    /**
+     * 创建 MySQL BUCKET 活动，按固定规则拆分总额度。Redis 仍使用单库存 Key，
+     * 由测试显式初始化；本辅助方法不写入 Redis。
+     */
+    protected void createBucketActivity(long voucherId, int totalStock, int bucketCount,
+                                        java.time.LocalDateTime begin, java.time.LocalDateTime end) {
+        jdbcTemplate.update("""
+                        INSERT INTO tb_voucher
+                            (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+                        VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
+                        """,
+                voucherId, "测试分桶秒杀券-" + voucherId);
+        jdbcTemplate.update("""
+                        INSERT INTO tb_seckill_voucher
+                            (voucher_id, total_stock, stock, stock_mode, bucket_count,
+                             layout_version, begin_time, end_time)
+                        VALUES (?, ?, 0, 'BUCKET', ?, 1, ?, ?)
+                        """,
+                voucherId, totalStock, bucketCount, begin, end);
+        int base = totalStock / bucketCount;
+        int remainder = totalStock % bucketCount;
+        for (int bucketNo = 0; bucketNo < bucketCount; bucketNo++) {
+            int amount = base + (bucketNo < remainder ? 1 : 0);
+            jdbcTemplate.update("""
+                            INSERT INTO tb_seckill_voucher_bucket
+                                (voucher_id, bucket_no, total_stock, remaining_stock, layout_version)
+                            VALUES (?, ?, ?, ?, 1)
+                            """,
+                    voucherId, bucketNo, amount, amount);
+        }
     }
 }

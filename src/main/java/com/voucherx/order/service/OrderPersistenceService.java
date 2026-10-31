@@ -1,28 +1,39 @@
 package com.voucherx.order.service;
 
+import com.voucherx.config.SeckillProperties;
 import com.voucherx.order.entity.VoucherOrder;
 import com.voucherx.order.mapper.VoucherOrderMapper;
 import com.voucherx.seckill.model.SeckillOrderMessage;
 import com.voucherx.voucher.entity.SeckillVoucher;
+import com.voucherx.voucher.entity.StockMode;
+import com.voucherx.voucher.mapper.SeckillVoucherBucketMapper;
 import com.voucherx.voucher.mapper.SeckillVoucherMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 秒杀订单的 MySQL 事务边界。
- * 条件扣库存与订单插入必须属于同一个事务；任何一步失败都回滚。
- * 该类独立于 RabbitMQ Consumer，便于单独测试事务行为。
+ *
+ * SINGLE 模式：条件扣减活动库存行。
+ * BUCKET 模式：按消息起始桶开始，有界尝试后续桶，只扣实际成功的那一行。
+ * 桶扣减与订单插入必须属于同一个事务；任何一步失败都回滚。
  */
 @Service
 public class OrderPersistenceService {
 
     private final VoucherOrderMapper orderMapper;
     private final SeckillVoucherMapper seckillVoucherMapper;
+    private final SeckillVoucherBucketMapper bucketMapper;
+    private final SeckillProperties properties;
 
     public OrderPersistenceService(VoucherOrderMapper orderMapper,
-                                   SeckillVoucherMapper seckillVoucherMapper) {
+                                   SeckillVoucherMapper seckillVoucherMapper,
+                                   SeckillVoucherBucketMapper bucketMapper,
+                                   SeckillProperties properties) {
         this.orderMapper = orderMapper;
         this.seckillVoucherMapper = seckillVoucherMapper;
+        this.bucketMapper = bucketMapper;
+        this.properties = properties;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -47,20 +58,98 @@ public class OrderPersistenceService {
                     "秒杀活动不存在");
         }
 
-        // 条件更新防止库存为负；即使 Redis 预扣出现偏差，MySQL 仍是最终防线。
-        int changed = seckillVoucherMapper.deductStock(message.voucherId());
-        if (changed == 0) {
-            throw new OrderBusinessException(OrderFailure.SOLD_OUT, "数据库库存不足");
-        }
+        StockMode activityMode = StockMode.parse(activity.getStockMode());
+        int layoutVersion = activity.getLayoutVersion() == null ? 1 : activity.getLayoutVersion();
+        validateMessageLayout(message, activityMode, layoutVersion);
+
+        Integer actualBucket = activityMode == StockMode.BUCKET
+                ? deductBucket(message, activity, layoutVersion)
+                : deductSingleStock(message, activity);
 
         VoucherOrder order = new VoucherOrder();
         order.setRequestId(message.requestId());
         order.setMessageId(message.messageId());
         order.setUserId(message.userId());
         order.setVoucherId(message.voucherId());
+        order.setStockMode(activityMode.name());
+        order.setBucketNo(actualBucket);
+        order.setLayoutVersion(layoutVersion);
         order.setStatus(VoucherOrder.STATUS_CREATED);
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
         return new OrderPersistResult(order.getId(), true);
+    }
+
+    private Integer deductSingleStock(SeckillOrderMessage message, SeckillVoucher activity) {
+        int changed = seckillVoucherMapper.deductStock(message.voucherId());
+        if (changed == 0) {
+            throw new OrderBusinessException(OrderFailure.SOLD_OUT, "数据库库存不足");
+        }
+        return 0;
+    }
+
+    private Integer deductBucket(SeckillOrderMessage message, SeckillVoucher activity,
+                                 int layoutVersion) {
+        int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
+        if (bucketCount <= 0) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                    "库存桶数量不合法");
+        }
+        int bucketRows = bucketMapper.countBuckets(message.voucherId(), layoutVersion);
+        if (bucketRows != bucketCount) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                    "库存桶布局不完整");
+        }
+
+        int startBucket = message.startBucketNo() == null
+                ? Math.floorMod(message.userId(), bucketCount)
+                : message.startBucketNo();
+        if (startBucket < 0 || startBucket >= bucketCount) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                    "消息中的库存桶不属于该活动布局");
+        }
+
+        int attempts = Math.min(Math.max(1, properties.bucketAttempts()), bucketCount);
+        for (int i = 0; i < attempts; i++) {
+            int bucketNo = (startBucket + i) % bucketCount;
+            if (bucketMapper.deductBucket(message.voucherId(), bucketNo, layoutVersion) == 1) {
+                return bucketNo;
+            }
+        }
+
+        long remaining = bucketMapper.sumRemaining(message.voucherId(), layoutVersion);
+        if (remaining == 0) {
+            throw new OrderBusinessException(OrderFailure.SOLD_OUT, "数据库库存不足");
+        }
+        throw new OrderBusinessException(OrderFailure.LOCAL_SOLD_OUT,
+                "有界桶尝试耗尽，仍有其他桶库存");
+    }
+
+    private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode,
+                                       int layoutVersion) {
+        String messageMode = message.stockMode();
+        if (activityMode == StockMode.SINGLE) {
+            if (messageMode != null && !messageMode.isBlank()
+                    && !StockMode.SINGLE.name().equalsIgnoreCase(messageMode)) {
+                throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                        "消息库存模式与活动不一致");
+            }
+            int messageLayout = message.layoutVersion() == null ? 0 : message.layoutVersion();
+            if (messageLayout != 0 && messageLayout != layoutVersion) {
+                throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                        "消息布局版本与单库存活动不一致");
+            }
+            return;
+        }
+
+        // BUCKET 活动必须携带明确布局；旧 SINGLE 消息不能被解释为桶请求。
+        if (messageMode == null || !StockMode.BUCKET.name().equalsIgnoreCase(messageMode)) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                    "BUCKET 活动收到缺少库存模式的消息");
+        }
+        if (message.layoutVersion() == null || message.layoutVersion() != layoutVersion) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
+                    "消息布局版本与桶活动不一致");
+        }
     }
 }

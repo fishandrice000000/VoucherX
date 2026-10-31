@@ -11,6 +11,7 @@ import com.voucherx.seckill.dto.SeckillRequestStatusResponse;
 import com.voucherx.seckill.model.SeckillOrderMessage;
 import com.voucherx.seckill.model.SeckillRequestStatus;
 import com.voucherx.voucher.entity.SeckillVoucher;
+import com.voucherx.voucher.entity.StockMode;
 import com.voucherx.voucher.mapper.SeckillVoucherMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,13 +65,25 @@ public class SeckillService {
             throw new BusinessException(ErrorCode.SECKILL_ENDED);
         }
 
+        StockMode stockMode = StockMode.parse(activity.getStockMode());
+        int bucketCount = activity.getBucketCount() == null ? 1 : activity.getBucketCount();
+        int layoutVersion = activity.getLayoutVersion() == null ? 1 : activity.getLayoutVersion();
+        if (stockMode == StockMode.BUCKET && bucketCount <= 0) {
+            throw new BusinessException(ErrorCode.SECKILL_STOCK_UNAVAILABLE, "库存布局不可用");
+        }
+        int startBucketNo = stockMode == StockMode.BUCKET
+                ? Math.floorMod(userId, bucketCount)
+                : 0;
+
         String requestId = UUID.randomUUID().toString();
-        long reserveResult = stockService.reserve(voucherId, userId, requestId, now, begin, end);
+        long reserveResult = stockService.reserve(voucherId, userId, requestId, now, begin, end,
+                stockMode.name(), startBucketNo, layoutVersion);
         handleReserveResult(reserveResult);
 
         String messageId = UUID.randomUUID().toString();
         SeckillOrderMessage message = new SeckillOrderMessage(
-                messageId, requestId, userId, voucherId, now);
+                messageId, requestId, userId, voucherId, now,
+                stockMode.name(), startBucketNo, layoutVersion);
 
         PublishResult publishResult;
         try {

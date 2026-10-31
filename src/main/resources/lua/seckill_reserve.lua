@@ -8,6 +8,9 @@
 -- ARGV[4] 活动开始毫秒时间戳
 -- ARGV[5] 活动结束毫秒时间戳
 -- ARGV[6] voucherId
+-- ARGV[7] 库存模式（SINGLE / BUCKET）
+-- ARGV[8] 起始 MySQL 桶编号
+-- ARGV[9] 布局版本
 -- 返回 >= 0 表示剩余库存；-1 库存未初始化；-2 未开始；-3 已结束；-4 重复参与；-5 库存不足。
 local stockKey = KEYS[1]
 local usersKey = KEYS[2]
@@ -18,6 +21,9 @@ local now = tonumber(ARGV[3])
 local beginAt = tonumber(ARGV[4])
 local endAt = tonumber(ARGV[5])
 local voucherId = ARGV[6]
+local stockMode = ARGV[7]
+local startBucketNo = ARGV[8]
+local layoutVersion = ARGV[9]
 
 if redis.call('EXISTS', stockKey) == 0 then
     return -1
@@ -46,6 +52,9 @@ redis.call('HSET', requestKey,
         'voucherId', voucherId,
         'userId', userId,
         'status', 'PENDING',
+        'stockMode', stockMode,
+        'startBucketNo', startBucketNo,
+        'layoutVersion', layoutVersion,
         'createdAt', now)
 redis.call('EXPIRE', requestKey, 86400)
 return stock - 1

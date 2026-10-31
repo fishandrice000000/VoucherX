@@ -1,0 +1,83 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: voucherx
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3307/voucherx?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:voucherx}
+    password: ${DB_PASSWORD:voucherx}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 2
+      connection-timeout: 3000
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      connect-timeout: 2s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5673}
+    username: ${RABBITMQ_USERNAME:voucherx}
+    password: ${RABBITMQ_PASSWORD:voucherx}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: manual
+        prefetch: 10
+        concurrency: 1
+        max-concurrency: 1
+        default-requeue-rejected: false
+  jackson:
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+  mvc:
+    problemdetails:
+      enabled: false
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+voucherx:
+  auth:
+    code-ttl-seconds: 300
+    code-cooldown-seconds: 60
+    ip-limit-per-minute: 10
+    token-ttl-seconds: 1800
+    # 默认关闭。仅本地/测试环境可打开，生产环境不得暴露验证码。
+    expose-code: ${AUTH_EXPOSE_CODE:false}
+  shop-cache:
+    ttl-seconds: 1800
+    ttl-random-seconds: 300
+    null-ttl-seconds: 120
+    lock-ttl-seconds: 10
+    lock-wait-millis: 3000
+  seckill:
+    publish-confirm-timeout-millis: 5000
+    # ACK 与 mandatory return 回调可能由不同线程调度，ACK 后短暂等待 return 以正确识别路由失败。
+    return-grace-millis: 100
+    request-status-ttl-seconds: 86400
+  mq:
+    max-retries: 3
+    retry-ttl-millis: 5000
+
+logging:
+  level:
+    root: INFO
+    com.voucherx: INFO

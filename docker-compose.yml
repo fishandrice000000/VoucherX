@@ -5,10 +5,10 @@ services:
     image: mysql:8.0
     container_name: voucherx-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: voucherx
-      MYSQL_USER: voucherx
-      MYSQL_PASSWORD: voucherx
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_NAME:-voucherx}
+      MYSQL_USER: ${DB_USERNAME:-voucherx}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-voucherx}
       TZ: Asia/Shanghai
     command:
       - --character-set-server=utf8mb4
@@ -43,8 +43,8 @@ services:
     image: rabbitmq:3.13-management-alpine
     container_name: voucherx-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: voucherx
-      RABBITMQ_DEFAULT_PASS: voucherx
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-voucherx}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-voucherx}
     ports:
       - "5673:5672"
       - "15673:15672"

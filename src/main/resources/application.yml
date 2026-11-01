@@ -21,6 +21,7 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6380}
+      database: ${REDIS_DB:0}
       password: ${REDIS_PASSWORD:}
       timeout: 2s
       connect-timeout: 2s
@@ -105,6 +106,11 @@ voucherx:
   mq:
     max-retries: 3
     retry-ttl-millis: 5000
+  experiment:
+    # 仅用于隔离实验，默认关闭；不通过产品 HTTP 接口修改。
+    enabled: ${EXPERIMENT_ENABLED:false}
+    transaction-delay-millis: ${EXPERIMENT_TRANSACTION_DELAY_MS:0}
+    delay-file: ${EXPERIMENT_DELAY_FILE:/tmp/voucherx-experiment-delay-ms}
 
 logging:
   level:

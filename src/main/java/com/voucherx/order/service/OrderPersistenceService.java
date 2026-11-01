@@ -1,6 +1,7 @@
 package com.voucherx.order.service;
 
 import com.voucherx.config.SeckillProperties;
+import com.voucherx.config.TransactionDelay;
 import com.voucherx.order.entity.VoucherOrder;
 import com.voucherx.order.mapper.VoucherOrderMapper;
 import com.voucherx.seckill.model.SeckillOrderMessage;
@@ -25,15 +26,18 @@ public class OrderPersistenceService {
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
     private final SeckillProperties properties;
+    private final TransactionDelay transactionDelay;
 
     public OrderPersistenceService(VoucherOrderMapper orderMapper,
                                    SeckillVoucherMapper seckillVoucherMapper,
                                    SeckillVoucherBucketMapper bucketMapper,
-                                   SeckillProperties properties) {
+                                   SeckillProperties properties,
+                                   TransactionDelay transactionDelay) {
         this.orderMapper = orderMapper;
         this.seckillVoucherMapper = seckillVoucherMapper;
         this.bucketMapper = bucketMapper;
         this.properties = properties;
+        this.transactionDelay = transactionDelay;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -65,6 +69,10 @@ public class OrderPersistenceService {
         Integer actualBucket = activityMode == StockMode.BUCKET
                 ? deductBucket(message, activity, layoutVersion)
                 : deductSingleStock(message, activity);
+
+        // 仅实验环境：在事务内、扣库存之后注入延迟，模拟数据库处理能力下降并
+        // 放大真实锁/提交窗口；默认配置下为空操作。
+        transactionDelay.apply();
 
         VoucherOrder order = new VoucherOrder();
         order.setRequestId(message.requestId());

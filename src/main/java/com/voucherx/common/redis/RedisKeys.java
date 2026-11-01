@@ -43,4 +43,24 @@ public final class RedisKeys {
     public static String seckillRequest(String requestId) {
         return "voucherx:seckill:request:" + requestId;
     }
+
+    /**
+     * 方向 02 准入 Key 使用同一 hash tag，为未来 Redis Cluster 同槽操作保留空间；
+     * 当前只支持并验证单节点 Redis。
+     */
+    public static String admissionSharedTokens() {
+        return "voucherx:{admission}:shared:tokens";
+    }
+
+    public static String admissionSharedPolicy() {
+        return "voucherx:{admission}:shared:policy";
+    }
+
+    public static String admissionActivityTokens(Long voucherId) {
+        return "voucherx:{admission}:activity:" + voucherId + ":tokens";
+    }
+
+    public static String admissionActivityPolicy(Long voucherId) {
+        return "voucherx:{admission}:activity:" + voucherId + ":policy";
+    }
 }

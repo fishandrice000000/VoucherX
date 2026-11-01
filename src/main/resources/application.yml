@@ -73,6 +73,35 @@ voucherx:
     request-status-ttl-seconds: 86400
     # MySQL BUCKET 模式单次消费最多尝试的桶数，避免无限遍历。
     bucket-attempts: 3
+  admission:
+    # OFF 保留 V1 行为；FIXED/ADAPTIVE 为实验准入模式。
+    mode: ${ADMISSION_MODE:OFF}
+    local:
+      enabled: ${ADMISSION_LOCAL_ENABLED:true}
+      # 单实例突发保护；实验时可调高以避免遮蔽全局效果。
+      rate-per-second: ${ADMISSION_LOCAL_RATE:1000}
+      capacity: ${ADMISSION_LOCAL_CAPACITY:100}
+    global:
+      enabled: ${ADMISSION_GLOBAL_ENABLED:true}
+      shared-rate: ${ADMISSION_SHARED_RATE:200}
+      shared-capacity: ${ADMISSION_SHARED_CAPACITY:200}
+      activity-rate: ${ADMISSION_ACTIVITY_RATE:200}
+      activity-capacity: ${ADMISSION_ACTIVITY_CAPACITY:200}
+      # 0 表示固定策略长期有效；自适应控制器应设置有限有效期。
+      policy-ttl-millis: ${ADMISSION_POLICY_TTL_MS:0}
+    controller:
+      interval-millis: ${ADMISSION_CONTROLLER_INTERVAL_MS:2000}
+      initial-rate: ${ADMISSION_INITIAL_RATE:100}
+      min-rate: ${ADMISSION_MIN_RATE:10}
+      max-rate: ${ADMISSION_MAX_RATE:400}
+      alpha: ${ADMISSION_ALPHA:10}
+      beta: ${ADMISSION_BETA:0.8}
+      high-watermark: ${ADMISSION_HIGH_WATERMARK:1000}
+      low-watermark: ${ADMISSION_LOW_WATERMARK:100}
+      min-completion-ratio: ${ADMISSION_MIN_COMPLETION_RATIO:0.9}
+      health-windows: ${ADMISSION_HEALTH_WINDOWS:3}
+      cooldown-millis: ${ADMISSION_COOLDOWN_MS:10000}
+      policy-ttl-millis: ${ADMISSION_CONTROLLER_POLICY_TTL_MS:10000}
   mq:
     max-retries: 3
     retry-ttl-millis: 5000

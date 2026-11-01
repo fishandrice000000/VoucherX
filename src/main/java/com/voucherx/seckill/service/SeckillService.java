@@ -1,5 +1,6 @@
 package com.voucherx.seckill.service;
 
+import com.voucherx.admission.SeckillAdmissionService;
 import com.voucherx.common.api.ErrorCode;
 import com.voucherx.common.exception.BusinessException;
 import com.voucherx.mq.publisher.PublishResult;
@@ -36,17 +37,20 @@ public class SeckillService {
     private final SeckillStockService stockService;
     private final SeckillRequestStatusStore statusStore;
     private final SeckillMessagePublisher publisher;
+    private final SeckillAdmissionService admissionService;
 
     public SeckillService(SeckillVoucherMapper seckillVoucherMapper,
                           VoucherOrderMapper orderMapper,
                           SeckillStockService stockService,
                           SeckillRequestStatusStore statusStore,
-                          SeckillMessagePublisher publisher) {
+                          SeckillMessagePublisher publisher,
+                          SeckillAdmissionService admissionService) {
         this.seckillVoucherMapper = seckillVoucherMapper;
         this.orderMapper = orderMapper;
         this.stockService = stockService;
         this.statusStore = statusStore;
         this.publisher = publisher;
+        this.admissionService = admissionService;
     }
 
     public SeckillAcceptResponse seckill(Long userId, Long voucherId) {
@@ -74,6 +78,10 @@ public class SeckillService {
         int startBucketNo = stockMode == StockMode.BUCKET
                 ? Math.floorMod(userId, bucketCount)
                 : 0;
+
+        // 全局限流必须在任何库存/资格占用之前；活动不存在、未开始、结束的请求
+        // 已在上面返回，不消耗全局令牌。
+        admissionService.acquireGlobal(voucherId);
 
         String requestId = UUID.randomUUID().toString();
         long reserveResult = stockService.reserve(voucherId, userId, requestId, now, begin, end,

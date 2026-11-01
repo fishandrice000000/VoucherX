@@ -39,6 +39,16 @@ public class RedisScriptConfig {
         return script("lua/seckill_request_status.lua");
     }
 
+    @Bean
+    public DefaultRedisScript<Long> admissionAcquireScript() {
+        return script("lua/admission_acquire.lua");
+    }
+
+    @Bean
+    public DefaultRedisScript<Long> admissionPolicyUpdateScript() {
+        return script("lua/admission_policy_update.lua");
+    }
+
     private DefaultRedisScript<Long> script(String classpath) {
         try {
             ClassPathResource resource = new ClassPathResource(classpath);

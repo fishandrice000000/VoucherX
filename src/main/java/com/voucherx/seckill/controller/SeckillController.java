@@ -1,5 +1,6 @@
 package com.voucherx.seckill.controller;
 
+import com.voucherx.admission.SeckillAdmissionService;
 import com.voucherx.auth.context.UserContext;
 import com.voucherx.common.api.ApiResponse;
 import com.voucherx.seckill.dto.SeckillAcceptResponse;
@@ -18,13 +19,18 @@ import org.springframework.web.bind.annotation.RestController;
 public class SeckillController {
 
     private final SeckillService seckillService;
+    private final SeckillAdmissionService admissionService;
 
-    public SeckillController(SeckillService seckillService) {
+    public SeckillController(SeckillService seckillService,
+                             SeckillAdmissionService admissionService) {
         this.seckillService = seckillService;
+        this.admissionService = admissionService;
     }
 
     @PostMapping("/vouchers/{voucherId}")
     public ResponseEntity<ApiResponse<SeckillAcceptResponse>> seckill(@PathVariable Long voucherId) {
+        // 认证拦截器已经执行；本地突发保护在数据库查询/Redis 预扣之前。
+        admissionService.acquireLocal();
         SeckillAcceptResponse response = seckillService.seckill(UserContext.getRequired(), voucherId);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
     }

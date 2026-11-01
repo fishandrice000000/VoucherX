@@ -29,6 +29,8 @@ public enum ErrorCode {
     SECKILL_DUPLICATE(409, 40921, "请勿重复抢购"),
     SECKILL_STOCK_UNAVAILABLE(503, 50320, "秒杀库存状态不可用，请稍后重试"),
     SECKILL_PUBLISH_FAILED(503, 50321, "秒杀请求受理失败，请稍后重试"),
+    SECKILL_BUSY(429, 42920, "系统繁忙，请稍后重试"),
+    SECKILL_ADMISSION_UNAVAILABLE(503, 50322, "秒杀准入服务暂不可用，请稍后重试"),
 
     REQUEST_NOT_FOUND(404, 40430, "秒杀请求不存在"),
     ORDER_NOT_FOUND(404, 40440, "订单不存在");

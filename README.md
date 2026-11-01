@@ -259,6 +259,11 @@ bench/            # 压测客户端、数据准备、快照、采样与结果汇
 - [方向 01 压测](docs/01/benchmark-01.md)
 - [方向 01 测试](docs/01/testing-01.md)
 - [方向 01 限制](docs/01/limitations-01.md)
+- [方向 02 文档目录](docs/02/README.md)
+- [方向 02 设计](docs/02/design-02.md)
+- [方向 02 测试](docs/02/testing-02.md)
+- [方向 02 实验协议](docs/02/benchmark-02.md)
+- [方向 02 限制](docs/02/limitations-02.md)
 - [Git 提交规范](docs/git-conventions.md)
 
 ## 开发约定

@@ -28,12 +28,18 @@ sampler_pid=$!
 docker compose exec -T redis timeout "$((warmup + duration + 120))" \
   redis-cli --latency-history -i 5 > "$out/redis.latency.txt" 2>&1 &
 latency_pid=$!
+lock_probe_pid=""
+if [[ "${LOCK_PROBE:-0}" = "1" ]]; then
+  bench/lock-probe.sh "$out" "$((warmup + 30))" "$voucher_id" > "$out/lock-probe.log" 2>&1 &
+  lock_probe_pid=$!
+fi
 
 set +e
 java -cp /tmp/voucherx-bench LoadClient \
   --url http://localhost:8080 \
   --voucher "$voucher_id" \
   --tokens "$tokens" \
+  --token-offset "${TOKEN_OFFSET:-0}" \
   --rate "$rate" \
   --warmup "$warmup" \
   --duration "$duration" \
@@ -69,9 +75,18 @@ kill "$sampler_pid" 2>/dev/null || true
 kill "$latency_pid" 2>/dev/null || true
 wait "$sampler_pid" 2>/dev/null || true
 wait "$latency_pid" 2>/dev/null || true
+if [[ -n "$lock_probe_pid" ]]; then wait "$lock_probe_pid" 2>/dev/null || true; fi
 
 bench/snapshot.sh "$out" after
 bench/final-state.sh "$out" "$voucher_id"
+{
+  echo "request_id,completed_at_ms"
+  docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null <<SQL | sed 's/\t/,/'
+SELECT request_id, completed_at_ms
+  FROM tb_voucher_order
+ WHERE voucher_id = ${voucher_id};
+SQL
+} > "$out/orders.csv"
 measure_start=$(awk -F= '$1=="measure_start_epoch_ms"{print $2}' "$out/summary.txt")
 measure_end=$(awk -F= '$1=="measure_end_epoch_ms"{print $2}' "$out/summary.txt")
 window_orders=$(docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null <<SQL

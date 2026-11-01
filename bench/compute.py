@@ -34,6 +34,28 @@ def mysql_status(text):
     return values
 
 
+def percentile(values, pct):
+    if not values:
+        return -1
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, int((pct / 100.0) * len(ordered) + 0.999999) - 1))
+    return ordered[index]
+
+
+def read_csv_map(path, key_index=0, value_index=1):
+    result = {}
+    try:
+        with Path(path).open(newline="") as file:
+            reader = csv.reader(file)
+            next(reader, None)
+            for row in reader:
+                if len(row) > max(key_index, value_index):
+                    result[row[key_index]] = row[value_index]
+    except FileNotFoundError:
+        return None
+    return result
+
+
 def int_value(text, key, default=0):
     match = re.search(rf"^{re.escape(key)}=(\d+)$", text, re.MULTILINE)
     return int(match.group(1)) if match else default
@@ -75,8 +97,6 @@ def summarize(out_dir):
 
     max_backlog = 0
     max_unacked = 0
-    max_mysql_locks = 0
-    max_seckill_locks = 0
     samples_path = out / "samples.csv"
     if samples_path.exists():
         with samples_path.open(newline="") as file:
@@ -90,11 +110,6 @@ def summarize(out_dir):
                     max_unacked = max(max_unacked, int(row.get("rabbit_main_unacked") or 0))
                 except ValueError:
                     pass
-                try:
-                    max_mysql_locks = max(max_mysql_locks, int(row.get("mysql_data_lock_waits") or 0))
-                    max_seckill_locks = max(max_seckill_locks, int(row.get("mysql_seckill_locks") or 0))
-                except ValueError:
-                    pass
 
     def summary_int(key, default=0):
         return int_value(summary, key, default)
@@ -103,6 +118,42 @@ def summarize(out_dir):
         match = re.search(rf"^{re.escape(key)}\s+(\d+)$", final, re.MULTILINE)
         return int(match.group(1)) if match else -1
 
+    accepted_requests = read_csv_map(out / "accepted_requests.csv", 0, 1)
+    order_completed = read_csv_map(out / "orders.csv", 0, 1)
+    e2e_db_values = []
+    e2e_db_missing = 0
+    if accepted_requests is not None and order_completed is not None:
+        for request_id, start in accepted_requests.items():
+            completed = order_completed.get(request_id)
+            if completed is None or int(completed) <= 0:
+                e2e_db_missing += 1
+                continue
+            latency = int(completed) - int(start)
+            if latency >= 0:
+                e2e_db_values.append(latency)
+        with (out / "e2e_db.csv").open("w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["request_id", "e2e_ms"])
+            for request_id, start in accepted_requests.items():
+                completed = order_completed.get(request_id)
+                if completed is not None and int(completed) > 0:
+                    writer.writerow([request_id, int(completed) - int(start)])
+
+    lock_probe_summaries = []
+    lock_probe_details = []
+    lock_probe_path = out / "lock-probe.tsv"
+    if lock_probe_path.exists():
+        for line in lock_probe_path.read_text(errors="replace").splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[1] == "SUMMARY":
+                try:
+                    lock_probe_summaries.append(int(parts[2]))
+                except ValueError:
+                    pass
+            elif len(parts) >= 4 and parts[1] == "DETAIL":
+                lock_probe_details.append(parts[2:])
+
+    e2e_db_available = accepted_requests is not None and order_completed is not None
     orders = final_int("orders")
     stock_mode_match = re.search(r"^stock_mode\s+(\S+)$", final, re.MULTILINE)
     stock_mode = stock_mode_match.group(1) if stock_mode_match else "SINGLE"
@@ -129,10 +180,15 @@ def summarize(out_dir):
         f"http_p95_ms={summary_int('http_p95_ms')}",
         f"http_p99_ms={summary_int('http_p99_ms')}",
         f"max_dispatch_lag_ms={summary_int('max_dispatch_lag_ms')}",
-        f"e2e_samples_done={summary_int('e2e_samples_done')}",
-        f"e2e_p50_ms={summary_int('e2e_p50_ms')}",
-        f"e2e_p95_ms={summary_int('e2e_p95_ms')}",
-        f"e2e_p99_ms={summary_int('e2e_p99_ms')}",
+        f"e2e_status_samples_done={summary_int('e2e_samples_done')}",
+        f"e2e_status_p50_ms={summary_int('e2e_p50_ms')}",
+        f"e2e_status_p95_ms={summary_int('e2e_p95_ms')}",
+        f"e2e_status_p99_ms={summary_int('e2e_p99_ms')}",
+        f"e2e_db_samples={len(e2e_db_values) if e2e_db_available else -1}",
+        f"e2e_db_missing={e2e_db_missing if e2e_db_available else -1}",
+        f"e2e_db_p50_ms={percentile(e2e_db_values, 50)}",
+        f"e2e_db_p95_ms={percentile(e2e_db_values, 95)}",
+        f"e2e_db_p99_ms={percentile(e2e_db_values, 99)}",
         f"skipped={summary_int('skipped_total')}",
         f"errors={summary_int('errors_total')}",
         f"orders_in_measure_window={window_orders}",
@@ -162,8 +218,12 @@ def summarize(out_dir):
         f"mysql_com_select_delta={status_delta('Com_select')}",
         f"max_rabbit_backlog={max_backlog}",
         f"max_rabbit_unacked={max_unacked}",
-        f"max_mysql_data_lock_waits={max_mysql_locks}",
-        f"max_mysql_seckill_locks={max_seckill_locks}",
+        "max_mysql_inventory_lock_waits="
+        + (str(max(lock_probe_summaries)) if lock_probe_summaries else "NOT_MEASURED"),
+        f"mysql_inventory_lock_probe_samples={len(lock_probe_summaries)}",
+        f"mysql_inventory_lock_detail_rows={len(lock_probe_details)}",
+        "mysql_inventory_lock_probe_available="
+        + ("true" if lock_probe_summaries else "false"),
         exit_codes.strip(),
     ]
     (out / "metrics.txt").write_text("\n".join(lines) + "\n")

@@ -59,6 +59,7 @@ public final class LoadClient {
         final ConcurrentLinkedQueue<Long> e2eNanos = new ConcurrentLinkedQueue<>();
         final ConcurrentLinkedQueue<Sample> samples = new ConcurrentLinkedQueue<>();
         final ConcurrentLinkedQueue<String> e2eRows = new ConcurrentLinkedQueue<>();
+        final ConcurrentLinkedQueue<String> acceptedRequestRows = new ConcurrentLinkedQueue<>();
         final AtomicLong e2eFailed = new AtomicLong();
         final AtomicLong e2eSamples = new AtomicLong();
 
@@ -78,6 +79,7 @@ public final class LoadClient {
         int concurrency = Integer.parseInt(options.getOrDefault("concurrency", "256"));
         int maxInflight = Integer.parseInt(options.getOrDefault("max-inflight", "512"));
         int sampleStatus = Integer.parseInt(options.getOrDefault("sample-status", "30"));
+        int tokenOffset = Integer.parseInt(options.getOrDefault("token-offset", "0"));
         long sampleIntervalMillis = Long.parseLong(options.getOrDefault("sample-interval-ms", "1000"));
         Path output = Path.of(required(options, "output"));
         Files.createDirectories(output);
@@ -97,7 +99,10 @@ public final class LoadClient {
         URI seckillUri = URI.create(baseUrl + "/api/seckill/vouchers/" + voucherId);
 
         Counters counters = new Counters();
-        AtomicInteger tokenIndex = new AtomicInteger();
+        if (tokenOffset < 0 || tokenOffset >= tokens.size()) {
+            throw new IllegalArgumentException("token-offset 超出 token 文件范围");
+        }
+        AtomicInteger tokenIndex = new AtomicInteger(tokenOffset);
         AtomicInteger active = new AtomicInteger();
         Semaphore inFlight = new Semaphore(maxInflight);
 
@@ -122,6 +127,7 @@ public final class LoadClient {
             }
             String token = tokens.get(slot);
             long requestStart = System.nanoTime();
+            long requestStartEpochMillis = System.currentTimeMillis();
             try {
                 HttpRequest request = HttpRequest.newBuilder(seckillUri)
                         .timeout(Duration.ofSeconds(10))
@@ -159,14 +165,16 @@ public final class LoadClient {
                     }
 
                     Matcher idMatcher = REQUEST_ID.matcher(body);
-                    if (accepted && idMatcher.find()
-                            && counters.measuredAccepted.get() % sampleEvery == 0
-                            && counters.samples.size() < sampleStatus) {
+                    if (accepted && idMatcher.find()) {
                         String requestId = idMatcher.group(1);
-                        Sample sample = new Sample(requestId, token, requestStart);
-                        counters.samples.add(sample);
-                        Thread.startVirtualThread(() ->
-                                pollStatus(client, baseUrl, sample, counters, sampleIntervalMillis));
+                        counters.acceptedRequestRows.add(requestId + "," + requestStartEpochMillis);
+                        if (counters.measuredAccepted.get() % sampleEvery == 0
+                                && counters.samples.size() < sampleStatus) {
+                            Sample sample = new Sample(requestId, token, requestStart);
+                            counters.samples.add(sample);
+                            Thread.startVirtualThread(() ->
+                                    pollStatus(client, baseUrl, sample, counters, sampleIntervalMillis));
+                        }
                     }
                 }
             } catch (Exception ex) {
@@ -325,6 +333,13 @@ public final class LoadClient {
             writer.write("e2e_p99_ms=" + percentileMs(e2e, 99) + "\n");
             for (Map.Entry<Integer, AtomicLong> entry : counters.httpStatuses.entrySet()) {
                 writer.write("http_status_" + entry.getKey() + "=" + entry.getValue().get() + "\n");
+            }
+        }
+        try (BufferedWriter writer = Files.newBufferedWriter(output.resolve("accepted_requests.csv"))) {
+            writer.write("request_id,start_epoch_ms\n");
+            for (String row : new ArrayList<>(counters.acceptedRequestRows)) {
+                writer.write(row);
+                writer.write('\n');
             }
         }
         try (BufferedWriter writer = Files.newBufferedWriter(output.resolve("e2e.csv"))) {

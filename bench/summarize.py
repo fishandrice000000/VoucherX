@@ -32,9 +32,10 @@ def main():
     fields = [
         ("order_tps_in_measure_window", "orders_tps"),
         ("http_p99_ms", "http_p99_ms"),
-        ("e2e_p99_ms", "e2e_p99_ms"),
+        ("e2e_db_p99_ms", "e2e_db_p99_ms"),
         ("mysql_row_lock_waits_delta", "lock_waits"),
         ("max_rabbit_backlog", "max_backlog"),
+        ("max_mysql_inventory_lock_waits", "inventory_lock_waits"),
         ("redis_cpu_percent_of_one_core", "redis_cpu_pct"),
         ("stock_plus_orders", "conservation_sum"),
     ]

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS tb_voucher_order (
     bucket_no      INT         NOT NULL DEFAULT 0 COMMENT '实际扣减的 MySQL 桶编号',
     layout_version INT         NOT NULL DEFAULT 1 COMMENT '下单时库存布局版本',
     status         TINYINT     NOT NULL DEFAULT 1 COMMENT '1 已创建',
+    completed_at_ms BIGINT     NOT NULL DEFAULT 0 COMMENT '订单落库完成时间，应用毫秒时间戳，用于端到端追踪',
     create_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),

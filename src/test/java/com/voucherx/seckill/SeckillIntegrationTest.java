@@ -146,8 +146,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         });
 
         SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
-        assertThat(orderMapper.selectById(status.orderId()).getRequestId())
-                .isEqualTo(accepted.requestId());
+        VoucherOrder committed = orderMapper.selectById(status.orderId());
+        assertThat(committed.getRequestId()).isEqualTo(accepted.requestId());
+        assertThat(committed.getCompletedAtMs()).isPositive();
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isZero();
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
 
@@ -380,6 +381,31 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
 
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(10);
+        assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
+    }
+
+    @Test
+    void malformedBucketNumberCoverageIsRejected() {
+        createBucketActivity(VOUCHER_ID, 100, 4, LocalDateTime.now().minusHours(1),
+                LocalDateTime.now().plusHours(1));
+        // 行数仍为 4、总额度仍为 100，但编号为 0/1/2/99；桶 3 缺失。
+        jdbcTemplate.update("DELETE FROM tb_seckill_voucher_bucket WHERE voucher_id = ? AND bucket_no = 3",
+                VOUCHER_ID);
+        jdbcTemplate.update("""
+                INSERT INTO tb_seckill_voucher_bucket
+                    (voucher_id, bucket_no, total_stock, remaining_stock, layout_version)
+                VALUES (?, 99, 25, 25, 1)
+                """, VOUCHER_ID);
+
+        assertThat(stockInitializer.initializeSafely(VOUCHER_ID)).isFalse();
+        assertThat(stockService.stock(VOUCHER_ID)).isNull();
+
+        stockService.initializeIfAbsent(VOUCHER_ID, 100);
+        SeckillOrderMessage message = bucketMessage(1L, VOUCHER_ID, 0, 1, "BUCKET");
+        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+                .isInstanceOfSatisfying(OrderBusinessException.class,
+                        ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
+        assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(100);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
     }
 

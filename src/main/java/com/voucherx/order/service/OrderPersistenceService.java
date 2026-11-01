@@ -75,6 +75,8 @@ public class OrderPersistenceService {
         order.setBucketNo(actualBucket);
         order.setLayoutVersion(layoutVersion);
         order.setStatus(VoucherOrder.STATUS_CREATED);
+        // 事务提交会稍晚于该时间，作为端到端观测的落库近似点。
+        order.setCompletedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
         return new OrderPersistResult(order.getId(), true);
@@ -95,10 +97,10 @@ public class OrderPersistenceService {
             throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
                     "库存桶数量不合法");
         }
-        int bucketRows = bucketMapper.countBuckets(message.voucherId(), layoutVersion);
-        if (bucketRows != bucketCount) {
+        var layout = bucketMapper.selectLayoutStats(message.voucherId(), layoutVersion);
+        if (layout == null || !layout.covers(bucketCount)) {
             throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
-                    "库存桶布局不完整");
+                    "库存桶编号未连续覆盖 0..bucketCount-1");
         }
 
         int startBucket = message.startBucketNo() == null

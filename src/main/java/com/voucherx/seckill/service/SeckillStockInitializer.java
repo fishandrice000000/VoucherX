@@ -100,9 +100,12 @@ public class SeckillStockInitializer implements ApplicationRunner {
         }
 
         int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
-        if (bucketCount <= 0 || bucketMapper.countBuckets(voucherId, layoutVersion) != bucketCount) {
-            log.warn("Redis 库存缺失且 MySQL 桶布局不完整，拒绝自动重建，voucherId={}, bucketCount={}, layout={}",
-                    voucherId, bucketCount, layoutVersion);
+        var layout = bucketMapper.selectLayoutStats(voucherId, layoutVersion);
+        if (bucketCount <= 0 || layout == null || !layout.covers(bucketCount)) {
+            log.warn("Redis 库存缺失且 MySQL 桶编号未连续覆盖，拒绝自动重建，voucherId={}, bucketCount={}, layout={}, stats={}",
+                    voucherId, bucketCount, layoutVersion, layout == null ? "null"
+                            : layout.getBucketCount() + "/" + layout.getMinBucketNo()
+                            + "/" + layout.getMaxBucketNo());
             return false;
         }
         long bucketTotal = bucketMapper.sumTotal(voucherId, layoutVersion);

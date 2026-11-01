@@ -21,6 +21,7 @@ public class VoucherOrder {
     private Integer bucketNo;
     private Integer layoutVersion;
     private Integer status;
+    private Long completedAtMs;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 
@@ -94,6 +95,14 @@ public class VoucherOrder {
 
     public void setStatus(Integer status) {
         this.status = status;
+    }
+
+    public Long getCompletedAtMs() {
+        return completedAtMs;
+    }
+
+    public void setCompletedAtMs(Long completedAtMs) {
+        this.completedAtMs = completedAtMs;
     }
 
     public LocalDateTime getCreateTime() {

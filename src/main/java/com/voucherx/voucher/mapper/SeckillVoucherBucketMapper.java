@@ -1,6 +1,7 @@
 package com.voucherx.voucher.mapper;
 
 import com.voucherx.voucher.entity.SeckillVoucherBucket;
+import com.voucherx.voucher.model.BucketLayoutStats;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -20,6 +21,16 @@ public interface SeckillVoucherBucketMapper {
     int deductBucket(@Param("voucherId") Long voucherId,
                      @Param("bucketNo") Integer bucketNo,
                      @Param("layoutVersion") Integer layoutVersion);
+
+    @Select("""
+            SELECT COUNT(*) AS bucket_count,
+                   MIN(bucket_no) AS min_bucket_no,
+                   MAX(bucket_no) AS max_bucket_no
+              FROM tb_seckill_voucher_bucket
+             WHERE voucher_id = #{voucherId} AND layout_version = #{layoutVersion}
+            """)
+    BucketLayoutStats selectLayoutStats(@Param("voucherId") Long voucherId,
+                                        @Param("layoutVersion") Integer layoutVersion);
 
     @Select("""
             SELECT COUNT(*) FROM tb_seckill_voucher_bucket

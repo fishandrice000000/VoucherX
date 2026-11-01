@@ -490,7 +490,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         int userCount = 1000;
         int stock = 100;
         insertUsers(userCount);
-        createBucketActivity(VOUCHER_ID, stock, 4, LocalDateTime.now().minusHours(1),
+        // 默认最多尝试 3 个桶；使用 3 个桶保证本用例能覆盖全部桶并卖完，
+        // 4/8 桶的边界和局部售罄由其他用例覆盖。
+        createBucketActivity(VOUCHER_ID, stock, 3, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
         stockService.initializeIfAbsent(VOUCHER_ID, stock);
 

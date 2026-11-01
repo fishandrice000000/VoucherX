@@ -3,10 +3,12 @@
 set -euo pipefail
 out_dir="$1"
 voucher_id="$2"
+DB_NAME="${DB_NAME:-voucherx}"
+REDIS_DB="${REDIS_DB:-0}"
 mkdir -p "$out_dir"
 {
   echo "# voucher_id=${voucher_id}"
-  docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null <<SQL
+  docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL
 SET time_zone = '+08:00';
 SELECT 'orders', COUNT(*) FROM tb_voucher_order WHERE voucher_id = ${voucher_id};
 SELECT 'distinct_users', COUNT(DISTINCT user_id) FROM tb_voucher_order WHERE voucher_id = ${voucher_id};
@@ -22,8 +24,8 @@ SELECT 'duplicate_users', COUNT(*) FROM (
   WHERE voucher_id = ${voucher_id} GROUP BY user_id, voucher_id HAVING c > 1
 ) t;
 SQL
-  echo "redis_stock=$(docker compose exec -T redis redis-cli GET "voucherx:seckill:stock:${voucher_id}" 2>/dev/null | tr -d '\r')"
-  echo "redis_users=$(docker compose exec -T redis redis-cli SCARD "voucherx:seckill:users:${voucher_id}" 2>/dev/null | tr -d '\r')"
+  echo "redis_stock=$(docker compose exec -T redis redis-cli -n "$REDIS_DB" GET "voucherx:seckill:stock:${voucher_id}" 2>/dev/null | tr -d '\r')"
+  echo "redis_users=$(docker compose exec -T redis redis-cli -n "$REDIS_DB" SCARD "voucherx:seckill:users:${voucher_id}" 2>/dev/null | tr -d '\r')"
   echo "rabbit_queues:"
   docker compose exec -T rabbitmq rabbitmqctl -q list_queues name messages messages_unacknowledged 2>/dev/null || true
 } > "$out_dir/final-state.txt"

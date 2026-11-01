@@ -6,13 +6,17 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `LoadClient.java` | JDK 21 单文件压测客户端，虚拟线程、开环限速、HTTP 延迟与状态采样 |
+| `LoadClient.java` | JDK 21 单文件恒定速率压测客户端，虚拟线程、开环限速、HTTP 延迟与状态采样 |
+| `PhaseLoadClient.java` | 分阶段开环客户端，按 `倍数:秒` 执行健康/突增/恢复轨迹并输出阶段统计 |
 | `prepare-data.py` | 生成压测用户 SQL、Token 文件和 Redis RESP 文件 |
 | `create-activity.sh` | 创建 SINGLE 或 BUCKET 压测活动并初始化 Redis 库存 |
 | `snapshot.sh` | 采集 Redis/MySQL/RabbitMQ/容器/应用快照 |
 | `sample.sh` | 每 2 秒轻量采样队列、Redis、应用 CPU；不在负载中查询 performance_schema |
 | `lock-probe.sh` | 独立低频锁探测，在峰值附近采样 3 次库存表/索引/记录 |
-| `run-one.sh` | 一次完整实验：快照 -> 采样 -> 施压 -> 排空 -> 快照 -> 汇总 |
+| `run-one.sh` | 恒定速率实验：快照 -> 采样 -> 施压 -> 排空 -> 快照 -> 汇总 |
+| `run-phase.sh` | 分阶段实验，支持测试专用事务延迟切换与阶段队列/端到端汇总 |
+| `compute-phase.py` | 汇总阶段 HTTP、队列、订单完成和 e2e |
+| `reset-02.sh` | 清理隔离库 `voucherx02` 的活动/订单/队列，保留用户和认证 Token |
 | `final-state.sh` | 查询订单、库存、桶剩余、重复用户与队列状态 |
 | `compute.py` | 汇总一次实验指标 |
 | `summarize.py` | 多组实验的中位数/最小/最大对比 |
@@ -35,6 +39,18 @@ Token 文件按用户顺序排列。不同活动可以复用同一批用户，�
 - Token 默认 TTL 较短；一次长实验后前 N 个 Token 可能已在认证拦截器续期后过期。
 - 可通过 `TOKEN_OFFSET` 使用未使用的 Token 区段，例如 `TOKEN_OFFSET=60000`。
 - 生成时可用 `--ttl 86400`，但应用请求会按登录态配置续期为 30 分钟。
+
+## 隔离方向 02 环境
+
+方向 02 不清理方向 01 的 `voucherx` 数据，使用独立 MySQL 库 `voucherx02` 和 Redis DB 2：
+
+```bash
+DB_NAME=voucherx02 REDIS_DB=2 bench/create-activity.sh 9301 1000000
+DB_NAME=voucherx02 REDIS_DB=2 BENCH_ROOT=tmp/02 \
+  bench/run-one.sh r200-9301 9301 200 30 120 128 0
+```
+
+应用启动时设置 `DB_URL=.../voucherx02` 与 `REDIS_DB=2`；方向 02 的测试数据和原始结果放在 `tmp/02/`。
 
 ## 启动应用（方向 01 对照）
 
@@ -73,6 +89,20 @@ run-one.sh <run-id> <voucher-id> <rate> <warmup> <duration> <concurrency> <sampl
 - `LOCK_PROBE=1` 才启动低频锁探测；默认关闭，避免干扰吞吐。
 - 原始数据写入 `tmp/01/<run-id>/`，被 `.gitignore` 忽略。
 - 输出包含 `summary.txt`、`metrics.txt`、`accepted_requests.csv`、`orders.csv`、`e2e_db.csv`、`latencies_ms.csv`、`samples.csv` 和前后快照。
+
+## 方向 02 分阶段实验
+
+```bash
+DB_NAME=voucherx02 REDIS_DB=2 BENCH_ROOT=tmp/02 DELAY_ENABLED=1 \
+  DELAY_MS=100 DELAY_START_SECONDS=90 DELAY_DURATION_SECONDS=60 \
+  EXPERIMENT_DELAY_FILE=/tmp/vx02-delay-ms \
+  bench/run-phase.sh adaptive-drop-9304 9304 175 1.0:60,1.0:60,1.0:120 30 128 0
+```
+
+- `PhaseLoadClient` 的阶段倍数是相对 `base-rate`。
+- `DELAY_*` 只修改实验控制文件；应用必须在隔离实验环境设置 `EXPERIMENT_ENABLED=true`，默认关闭。
+- `run-phase.sh` 的阶段队列统计以配置时长为准，阶段结束后的排空单独记录。
+- 阶段脚本不会把未完成/缺失订单当作 0；`compute-phase.py` 输出 `NOT_MEASURED`。
 
 ## 汇总
 

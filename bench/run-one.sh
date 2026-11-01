@@ -14,8 +14,11 @@ warmup="$4"
 duration="$5"
 concurrency="$6"
 sample_status="$7"
-out="tmp/01/${run_id}"
-tokens="${TOKENS_FILE:-tmp/01/tokens.txt}"
+BENCH_ROOT="${BENCH_ROOT:-tmp/01}"
+DB_NAME="${DB_NAME:-voucherx}"
+REDIS_DB="${REDIS_DB:-0}"
+out="${BENCH_ROOT}/${run_id}"
+tokens="${TOKENS_FILE:-${BENCH_ROOT}/tokens.txt}"
 mkdir -p "$out"
 
 if [[ ! -f /tmp/voucherx-bench/LoadClient.class ]]; then
@@ -81,7 +84,7 @@ bench/snapshot.sh "$out" after
 bench/final-state.sh "$out" "$voucher_id"
 {
   echo "request_id,completed_at_ms"
-  docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null <<SQL | sed 's/\t/,/'
+  docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL | sed 's/\t/,/'
 SELECT request_id, completed_at_ms
   FROM tb_voucher_order
  WHERE voucher_id = ${voucher_id};
@@ -89,7 +92,7 @@ SQL
 } > "$out/orders.csv"
 measure_start=$(awk -F= '$1=="measure_start_epoch_ms"{print $2}' "$out/summary.txt")
 measure_end=$(awk -F= '$1=="measure_end_epoch_ms"{print $2}' "$out/summary.txt")
-window_orders=$(docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null <<SQL
+window_orders=$(docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL
 SET time_zone = '+08:00';
 SELECT COUNT(*) FROM tb_voucher_order
  WHERE voucher_id = ${voucher_id}

@@ -4,6 +4,7 @@
 set -euo pipefail
 out_dir="$1"
 label="$2"
+DB_NAME="${DB_NAME:-voucherx}"
 mkdir -p "$out_dir"
 prefix="$out_dir/${label}"
 date -Is > "${prefix}.timestamp"
@@ -11,7 +12,7 @@ date -Is > "${prefix}.timestamp"
 docker compose exec -T redis redis-cli INFO all > "${prefix}.redis.info"
 docker compose exec -T redis redis-cli INFO commandstats > "${prefix}.redis.commandstats"
 
-docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N voucherx 2>/dev/null > "${prefix}.mysql.status" <<'SQL'
+docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null > "${prefix}.mysql.status" <<'SQL'
 SET time_zone = '+08:00';
 SHOW GLOBAL STATUS WHERE Variable_name IN (
   'Questions','Com_select','Com_insert','Com_update','Com_delete',

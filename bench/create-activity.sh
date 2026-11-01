@@ -9,6 +9,8 @@ if [[ $# -lt 2 || $# -gt 3 ]]; then
 fi
 voucher_id="$1"
 stock="$2"
+DB_NAME="${DB_NAME:-voucherx}"
+REDIS_DB="${REDIS_DB:-0}"
 bucket_count="${3:-1}"
 if (( voucher_id < 9000 )); then
   echo "拒绝操作非压测活动 ID: $voucher_id" >&2
@@ -40,7 +42,7 @@ else
   bucket_sql+=";"
 fi
 
-docker compose exec -T mysql mysql -uvoucherx -pvoucherx voucherx 2>/dev/null <<SQL
+docker compose exec -T mysql mysql -uvoucherx -pvoucherx "$DB_NAME" 2>/dev/null <<SQL
 SET NAMES utf8mb4;
 DELETE FROM tb_voucher_order WHERE voucher_id = ${voucher_id};
 DELETE FROM tb_seckill_voucher_bucket WHERE voucher_id = ${voucher_id};
@@ -55,6 +57,6 @@ VALUES (${voucher_id}, ${stock}, ${activity_stock}, '${mode}', ${bucket_count}, 
 ${bucket_sql}
 SQL
 
-docker compose exec -T redis redis-cli SET "voucherx:seckill:stock:${voucher_id}" "${stock}" >/dev/null
-docker compose exec -T redis redis-cli DEL "voucherx:seckill:users:${voucher_id}" >/dev/null
+docker compose exec -T redis redis-cli -n "$REDIS_DB" SET "voucherx:seckill:stock:${voucher_id}" "${stock}" >/dev/null
+docker compose exec -T redis redis-cli -n "$REDIS_DB" DEL "voucherx:seckill:users:${voucher_id}" >/dev/null
 echo "activity=${voucher_id} stock=${stock} mode=${mode} buckets=${bucket_count} redis_stock_initialized"

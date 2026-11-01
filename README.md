@@ -162,10 +162,11 @@ SeckillConsumerReliabilityTest            2 passed
 LocalTokenBucketTest                      4 passed
 AdaptiveRateControllerTest                6 passed
 AdmissionRedisPolicyTest                  3 passed
-SeckillAdmissionIntegrationTest           1 passed
+SeckillAdmissionIntegrationTest           2 passed
 SeckillLocalAdmissionIntegrationTest      1 passed
+CompletionMetricsTest                     1 passed
 ----------------------------------------------------------
-合计                                     46 passed, 0 failed, 0 skipped
+合计                                     48 passed, 0 failed, 0 skipped
 ```
 
 测试覆盖登录、缓存、秒杀时间/库存/一人一单、SINGLE 与 BUCKET 两种模式下 1000 用户争抢 100 张券、桶额度除不尽、局部售罄、布局不匹配、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询，以及本地/Redis 限流、拒绝前无副作用、AIMD 状态转移和策略过期。详见 [测试说明](docs/v1/testing.md)、[方向 01 测试说明](docs/01/testing-01.md) 与 [方向 02 测试说明](docs/02/testing-02.md)。

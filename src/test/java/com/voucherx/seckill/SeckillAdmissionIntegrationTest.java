@@ -32,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
 
     private static final long VOUCHER_ID = 2101L;
+    private static final long OTHER_VOUCHER_ID = 2102L;
 
     @Autowired
     private SeckillService seckillService;
@@ -60,5 +61,26 @@ class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
                 RedisKeys.seckillUsers(VOUCHER_ID), "2")).isFalse();
         Set<String> requestKeys = redisTemplate.keys("voucherx:seckill:request:*");
         assertThat(requestKeys).containsExactly(RedisKeys.seckillRequest(accepted.requestId()));
+    }
+
+    @Test
+    void sharedBudgetIsNotBypassedBySwitchingActivity() {
+        createUser(1);
+        createUser(2);
+        LocalDateTime begin = LocalDateTime.now().minusHours(1);
+        LocalDateTime end = LocalDateTime.now().plusHours(1);
+        createActivity(VOUCHER_ID, 10, 10, begin, end);
+        createActivity(OTHER_VOUCHER_ID, 10, 10, begin, end);
+        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        stockService.initializeIfAbsent(OTHER_VOUCHER_ID, 10);
+
+        seckillService.seckill(1L, VOUCHER_ID);
+        assertThatThrownBy(() -> seckillService.seckill(2L, OTHER_VOUCHER_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_BUSY));
+
+        assertThat(stockService.stock(OTHER_VOUCHER_ID)).isEqualTo(10L);
+        assertThat(redisTemplate.opsForSet().isMember(
+                RedisKeys.seckillUsers(OTHER_VOUCHER_ID), "2")).isFalse();
     }
 }

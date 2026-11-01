@@ -43,7 +43,9 @@ public final class AdaptiveRateController {
         invalidWindows = 0;
 
         boolean pendingWork = sample.workPending();
-        boolean completionLag = pendingWork && sample.completedTps()
+        // 只有队列中确实有积压时才把“完成 TPS 低于当前允许速率”解释为能力不足。
+        // 空闲或请求量本身低于允许速率时，在途数可能仍为 1，不能据此降速。
+        boolean completionLag = sample.queueReady() > 0 && sample.completedTps()
                 < currentRate * config.minCompletionRatio();
         boolean overloaded = sample.queueReady() > config.highWatermark()
                 || completionLag

@@ -44,6 +44,17 @@ class AdaptiveRateControllerTest {
     }
 
     @Test
+    void lowArrivalWithoutQueueDoesNotLookLikeCapacityLag() {
+        AdaptiveRateController controller = new AdaptiveRateController(CONFIG, 200);
+        // 允许速率 100，但只有 122 个完成/2s=61 TPS；队列为空、只有一个在途。
+        // 这是需求不足，不是下游过载，不能触发降速。
+        AdaptiveRateController.Decision decision =
+                controller.evaluate(sample(2_000, 122, 0, 1, 0), 1_000_000_000L);
+        assertThat(decision.rate()).isEqualTo(100);
+        assertThat(decision.changed()).isFalse();
+    }
+
+    @Test
     void idleSystemDoesNotAccelerateToMaximum() {
         AdaptiveRateController controller = new AdaptiveRateController(CONFIG, 200);
         long now = 1_000_000_000L;

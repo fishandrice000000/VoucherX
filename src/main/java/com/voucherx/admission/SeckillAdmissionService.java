@@ -2,6 +2,8 @@ package com.voucherx.admission;
 
 import com.voucherx.common.api.ErrorCode;
 import com.voucherx.common.exception.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
@@ -13,6 +15,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class SeckillAdmissionService {
 
+    private static final Logger log = LoggerFactory.getLogger(SeckillAdmissionService.class);
+
     private final AdmissionProperties properties;
     private final LocalAdmissionGate localGate;
     private final RedisAdmissionStore redisStore;
@@ -23,6 +27,13 @@ public class SeckillAdmissionService {
         this.properties = properties;
         this.localGate = localGate;
         this.redisStore = redisStore;
+        log.info("秒杀准入配置: mode={}, local={} ({} rps, cap {}), global={} "
+                        + "(shared {} rps/cap {}, activity {} rps/cap {})",
+                properties.mode(), properties.local().enabled(),
+                properties.local().ratePerSecond(), properties.local().capacity(),
+                properties.global().enabled(), properties.global().sharedRate(),
+                properties.global().sharedCapacity(), properties.global().activityRate(),
+                properties.global().activityCapacity());
     }
 
     public void acquireLocal() {

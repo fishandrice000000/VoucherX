@@ -1,6 +1,7 @@
 package com.voucherx.mq.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.voucherx.admission.CompletionMetrics;
 import com.rabbitmq.client.Channel;
 import com.voucherx.config.MqProperties;
 import com.voucherx.mq.config.RabbitMqConfig;
@@ -38,19 +39,22 @@ public class SeckillOrderConsumer {
     private final SeckillRequestStatusStore statusStore;
     private final SeckillMessagePublisher publisher;
     private final MqProperties mqProperties;
+    private final CompletionMetrics completionMetrics;
 
     public SeckillOrderConsumer(ObjectMapper objectMapper,
                                 OrderPersistenceService orderPersistenceService,
                                 VoucherOrderMapper orderMapper,
                                 SeckillRequestStatusStore statusStore,
                                 SeckillMessagePublisher publisher,
-                                MqProperties mqProperties) {
+                                MqProperties mqProperties,
+                                CompletionMetrics completionMetrics) {
         this.objectMapper = objectMapper;
         this.orderPersistenceService = orderPersistenceService;
         this.orderMapper = orderMapper;
         this.statusStore = statusStore;
         this.publisher = publisher;
         this.mqProperties = mqProperties;
+        this.completionMetrics = completionMetrics;
     }
 
     @RabbitListener(queues = RabbitMqConfig.MAIN_QUEUE)
@@ -68,21 +72,34 @@ public class SeckillOrderConsumer {
         }
 
         int retryCount = readRetryCount(amqpMessage);
+        long startedNanos = completionMetrics.begin();
         try {
             OrderPersistResult result = orderPersistenceService.persist(message);
+            if (result.created()) {
+                completionMetrics.recordCreated(startedNanos);
+            } else {
+                completionMetrics.recordDuplicate(startedNanos);
+            }
             statusStore.markSuccess(message.requestId(), message.messageId(), result.orderId());
             log.debug("秒杀订单处理成功，requestId={}, messageId={}, orderId={}, created={}",
                     message.requestId(), message.messageId(), result.orderId(), result.created());
             channel.basicAck(deliveryTag, false);
         } catch (OrderBusinessException ex) {
+            completionMetrics.recordBusinessFailure(startedNanos);
             statusStore.markFailed(message.requestId(), message.messageId(), ex.failure().name());
             log.warn("秒杀订单业务失败，不再重试，requestId={}, messageId={}, reason={}",
                     message.requestId(), message.messageId(), ex.failure());
             channel.basicAck(deliveryTag, false);
         } catch (DuplicateKeyException ex) {
+            // 唯一约束冲突在业务上可能是幂等成功，也可能是失败；由 handleDuplicate 判定，
+            // 这里统一记为一次未创建新订单的失败结果，避免虚增完成 TPS。
+            completionMetrics.recordFailure(startedNanos);
             handleDuplicate(message, deliveryTag, retryCount, channel, ex);
         } catch (Exception ex) {
+            completionMetrics.recordFailure(startedNanos);
             handleTransient(message, deliveryTag, retryCount, channel, ex);
+        } finally {
+            completionMetrics.end();
         }
     }
 

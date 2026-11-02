@@ -78,6 +78,10 @@ public abstract class AbstractIntegrationTest {
     @BeforeEach
     void cleanInfrastructureState() {
         purgeQueues();
+        jdbcTemplate.update("DELETE FROM tb_coupon_action");
+        jdbcTemplate.update("DELETE FROM tb_payment_event");
+        jdbcTemplate.update("DELETE FROM tb_consumption_order");
+        jdbcTemplate.update("DELETE FROM tb_user_coupon");
         jdbcTemplate.update("DELETE FROM tb_outbox");
         jdbcTemplate.update("DELETE FROM tb_seckill_request");
         jdbcTemplate.update("DELETE FROM tb_activity_control");

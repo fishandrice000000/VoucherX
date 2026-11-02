@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class OrderPersistenceService {
 
     private final com.voucherx.fulfillment.RequestLedger ledger;
+    private final com.voucherx.commerce.CommerceService commerce;
     private final VoucherOrderMapper orderMapper;
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
@@ -33,7 +34,8 @@ public class OrderPersistenceService {
                                    SeckillVoucherMapper seckillVoucherMapper,
                                    SeckillVoucherBucketMapper bucketMapper,
                                    SeckillProperties properties,
-                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger) {
+                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger,com.voucherx.commerce.CommerceService commerce) {
+        this.commerce = commerce;
         this.ledger = ledger;
         this.orderMapper = orderMapper;
         this.seckillVoucherMapper = seckillVoucherMapper;
@@ -90,6 +92,7 @@ public class OrderPersistenceService {
         order.setCompletedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
+        commerce.initializePurchase(order.getId(),message.voucherId());
         ledger.succeed(message.requestId(),order.getId());
         return new OrderPersistResult(order.getId(), true);
     }

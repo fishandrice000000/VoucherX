@@ -18,6 +18,9 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     @Autowired OutboxDispatcher dispatcher;
     @Autowired RequestLedger ledger;
     @Autowired com.voucherx.commerce.CommerceService commerce;
+    @Autowired com.voucherx.reconcile.CompensationService compensation;
+    @Autowired com.voucherx.order.service.OrderPersistenceService persistence;
+    @Autowired com.voucherx.reconcile.ReconciliationService reconciliation;
     @Test void realComponentsDeliverAcceptedRequestAndReplayIdempotently() {
         createUser(1);createActivity(1,10,10,LocalDateTime.now().minusMinutes(1),LocalDateTime.now().plusMinutes(5));
         assertThat(initializer.initializeSafely(1L)).isTrue();
@@ -50,5 +53,18 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         assertThat(commerce.coupon(coupon,false).get("state")).isEqualTo("USED");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_coupon_action WHERE action='USE'",Integer.class)).isEqualTo(1);
         assertThatThrownBy(()->commerce.cancel(1,consumeKind,consume)).isInstanceOf(com.voucherx.common.exception.BusinessException.class);
+    }
+    @Test void durableClosureAndRepeatedCompensationReturnStockOnce() {
+        createUser(1);createActivity(1,10,10,LocalDateTime.now().minusMinutes(1),LocalDateTime.now().plusMinutes(5));
+        initializer.initializeSafely(1L);
+        var accepted=service.seckill(1L,1L,"compensate");
+        var message=ledger.find(accepted.requestId()).message();
+        compensation.prepare(accepted.requestId(),"SMOKE_CLOSED");
+        assertThat(compensation.execute(accepted.requestId())).isEqualTo("RELEASED");
+        assertThat(compensation.execute(accepted.requestId())).isEqualTo("RELEASED");
+        assertThat(redisTemplate.opsForValue().get(com.voucherx.common.redis.RedisKeys.seckillStock(1L))).isEqualTo("10");
+        assertThatThrownBy(()->persistence.persist(message)).isInstanceOf(com.voucherx.order.service.OrderBusinessException.class);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_voucher_order",Integer.class)).isZero();
+        assertThat(reconciliation.diagnose(accepted.requestId()).action()).isEqualTo(com.voucherx.reconcile.ReconcileDecision.WAIT);
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import java.time.Clock;
 @Component
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="voucherx.maintenance-mode",havingValue="false",matchIfMissing=true)
 public class CommerceExpiryJob {
     private static final Logger log=LoggerFactory.getLogger(CommerceExpiryJob.class);
     private final JdbcTemplate db;private final CommerceService service;private final CommerceProperties config;private final Clock clock;

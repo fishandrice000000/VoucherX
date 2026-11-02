@@ -18,6 +18,7 @@ import java.util.List;
  * 已有历史订单但 Redis 库存丢失时拒绝自动重建，避免按原始总库存重置导致超发。
  */
 @Component
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="voucherx.maintenance-mode",havingValue="false",matchIfMissing=true)
 public class SeckillStockInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SeckillStockInitializer.class);

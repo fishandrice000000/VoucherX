@@ -23,6 +23,7 @@ import org.testcontainers.utility.DockerImageName;
 /**
  * 集成测试统一使用真实 MySQL、Redis、RabbitMQ。容器只启动一次，由 JVM 退出时清理。
  */
+@org.junit.jupiter.api.Tag("integration")
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")

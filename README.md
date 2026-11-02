@@ -148,6 +148,10 @@ curl http://localhost:8080/api/seckill/requests/<requestId> \
 
 ## 测试
 
+交付开发可使用 `mvn -Punit test`，只运行不依赖外部组件的单元测试；
+`mvn -Pintegration test` 运行真实组件测试，原有 `mvn test` 仍执行全部测试。
+`mvn -DskipTests package` 编译生产及测试源码并打包，不运行测试。
+
 ```bash
 mvn test
 ```

@@ -91,6 +91,17 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>unit</id>
+            <properties><excludedGroups>integration</excludedGroups></properties>
+        </profile>
+        <profile>
+            <id>integration</id>
+            <properties><groups>integration</groups></properties>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>

@@ -12,12 +12,12 @@ public class ActivityGate {
     public ActivityGate(JdbcTemplate db) { this.db = db; }
     public record Control(String state, long epoch) {}
     public Control lock(long voucherId) {
+        // 首次建行先普通读取/INSERT IGNORE，避免在不存在行上持共享间隙锁后升级插入。
+        if (db.queryForObject("SELECT COUNT(*) FROM tb_activity_control WHERE voucher_id=?",Long.class,voucherId)==0)
+            db.update("INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (?)",voucherId);
         var rows = db.query("SELECT state,epoch FROM tb_activity_control WHERE voucher_id=? FOR SHARE",
                 (rs,n) -> new Control(rs.getString(1),rs.getLong(2)),voucherId);
-        if (rows.isEmpty()) {
-            db.update("INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (?)",voucherId);
-            return lock(voucherId);
-        }
+        if (rows.isEmpty()) throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE,"活动控制记录不可用");
         return rows.getFirst();
     }
     public long requireNormal(long voucherId) {

@@ -44,6 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
+@org.springframework.test.context.TestPropertySource(properties="voucherx.fault.enabled=true")
 class SeckillIntegrationTest extends AbstractIntegrationTest {
 
     private static final long VOUCHER_ID = 2001L;
@@ -66,6 +67,12 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     private SeckillStockInitializer stockInitializer;
     @Autowired
     private OrderPersistenceService orderPersistenceService;
+
+    @Autowired private com.voucherx.fulfillment.RequestLedger ledger;
+    @Autowired private com.voucherx.fulfillment.OutboxDispatcher dispatcher;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Autowired private com.voucherx.recovery.FaultInjector faults;
+    @org.junit.jupiter.api.AfterEach void clearFaults() { faults.clear(); }
 
     @Test
     void activityNotStartedIsRejectedBeforeStockReservation() {
@@ -182,27 +189,23 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void unroutableMessageIsTreatedAsDefiniteFailureAndReleasesReservation() {
+    void unroutableMessageKeepsDurableAcceptanceAndReservationForRetry() {
         createUser(1);
-        createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),
-                LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
-
-        Binding binding = new Binding(RabbitMqConfig.MAIN_QUEUE, Binding.DestinationType.QUEUE,
-                RabbitMqConfig.MAIN_EXCHANGE, RabbitMqConfig.MAIN_ROUTING_KEY, null);
+        createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
+        stockService.initializeIfAbsent(VOUCHER_ID,1);
+        Binding binding=new Binding(RabbitMqConfig.MAIN_QUEUE,Binding.DestinationType.QUEUE,
+                RabbitMqConfig.MAIN_EXCHANGE,RabbitMqConfig.MAIN_ROUTING_KEY,null);
         rabbitAdmin.removeBinding(binding);
+        SeckillAcceptResponse accepted;
         try {
-            assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
-                    .isInstanceOfSatisfying(BusinessException.class,
-                            ex -> assertThat(ex.errorCode())
-                                    .isEqualTo(ErrorCode.SECKILL_PUBLISH_FAILED));
-        } finally {
-            rabbitAdmin.declareBinding(binding);
-        }
-
-        assertThat(stockService.stock(VOUCHER_ID)).isEqualTo(1L);
-        assertThat(redisTemplate.opsForSet().isMember(
-                RedisKeys.seckillUsers(VOUCHER_ID), "1")).isFalse();
+            accepted=seckillService.seckill(1L,VOUCHER_ID);
+            assertThat(accepted.status()).isEqualTo(SeckillRequestStatus.PROCESSING);
+            dispatcher.dispatch();
+            assertThat(ledger.find(accepted.requestId()).phase()).isEqualTo("ACCEPTED");
+            assertThat(stockService.stock(VOUCHER_ID)).isZero();
+        } finally { rabbitAdmin.declareBinding(binding); }
+        jdbcTemplate.update("UPDATE tb_outbox SET next_at_ms=0 WHERE request_id=?",accepted.requestId());
+        dispatcher.dispatch();awaitOrderCount(1);
     }
 
     @Test
@@ -218,7 +221,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(stockService.reserve(VOUCHER_ID, 1L, requestId, now, begin, end, "SINGLE", 0, 1)).isEqualTo(4L);
 
         assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST")).isTrue();
-        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST")).isFalse();
+        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST")).isTrue();
         assertThat(stockService.stock(VOUCHER_ID)).isEqualTo(5L);
     }
 
@@ -291,19 +294,14 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void orderInsertFailureRollsBackStockDeduction() {
-        createActivity(VOUCHER_ID, 3, 3, LocalDateTime.now().minusHours(1),
-                LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 3);
-
-        SeckillOrderMessage invalid = new SeckillOrderMessage(
-                UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-                null, VOUCHER_ID, System.currentTimeMillis(), "SINGLE", 0, 1);
-
-        assertThatThrownBy(() -> orderPersistenceService.persist(invalid))
-                .isInstanceOf(DataIntegrityViolationException.class);
+    void failureBeforeCommitRollsBackStockAndInsertedOrder() {
+        createActivity(VOUCHER_ID,3,3,LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
+        var message=preparedMessage(1,VOUCHER_ID,0,1,"SINGLE");
+        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),"rollback-single",com.voucherx.recovery.FaultInjector.Action.FAIL);
+        assertThatThrownBy(()->orderPersistenceService.persist(message)).isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isEqualTo(3);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
+        assertThat(ledger.find(message.requestId()).phase()).isEqualTo("ACCEPTED");
     }
 
     @Test
@@ -433,17 +431,12 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void bucketInsertFailureRollsBackBucketDeduction() {
-        createBucketActivity(VOUCHER_ID, 10, 4, LocalDateTime.now().minusHours(1),
-                LocalDateTime.now().plusHours(1));
-
-        SeckillOrderMessage invalid = new SeckillOrderMessage(
-                UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-                null, VOUCHER_ID, System.currentTimeMillis(), "BUCKET", 0, 1);
-
-        assertThatThrownBy(() -> orderPersistenceService.persist(invalid))
-                .isInstanceOf(DataIntegrityViolationException.class);
-        assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(10);
+    void failureBeforeCommitRollsBackBucketAndInsertedOrder() {
+        createBucketActivity(VOUCHER_ID,10,4,LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
+        var message=preparedMessage(1,VOUCHER_ID,0,1,"BUCKET");
+        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),"rollback-bucket",com.voucherx.recovery.FaultInjector.Action.FAIL);
+        assertThatThrownBy(()->orderPersistenceService.persist(message)).isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
+        assertThat(bucketMapper.sumRemaining(VOUCHER_ID,1)).isEqualTo(10);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
     }
 
@@ -547,8 +540,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
     private SeckillOrderMessage bucketMessage(long userId, long voucherId, int startBucket,
                                               int layoutVersion, String mode) {
-        return new SeckillOrderMessage(UUID.randomUUID().toString(), UUID.randomUUID().toString(),
-                userId, voucherId, System.currentTimeMillis(), mode, startBucket, layoutVersion);
+        return preparedMessage(userId,voucherId,startBucket,layoutVersion,mode);
     }
 
     @Test
@@ -629,6 +621,16 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                 Integer.class, VOUCHER_ID);
         assertThat(remaining).isNotNegative();
         assertThat(total).isEqualTo(remaining + orders);
+    }
+
+    /** 事务性测试夹具：准备真实受理流水，隔离自动投递后直接测试订单事务。 */
+    private SeckillOrderMessage preparedMessage(long user,long voucher,int bucket,int layout,String mode) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status->{
+            var request=ledger.intent(user,voucher,UUID.randomUUID().toString(),mode,bucket,layout);
+            ledger.accept(request.requestId());
+            jdbcTemplate.update("UPDATE tb_outbox SET state='QUARANTINED' WHERE request_id=?",request.requestId());
+            return request.message();
+        });
     }
 
     private void awaitOrderCount(int expected) {

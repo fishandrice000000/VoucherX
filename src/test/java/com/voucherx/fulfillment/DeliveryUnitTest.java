@@ -23,7 +23,7 @@ class DeliveryUnitTest {
     private final SeckillOrderMessage first=message("first",1L);
     static DeliveryProperties config(boolean batch) { return new DeliveryProperties(true,32,30000,8,1000,batch,16,1048576,50); }
     static SeckillOrderMessage message(String id,long user) { return new SeckillOrderMessage("e-"+id,id,user,1L,100,"SINGLE",0,1,1); }
-    private SeckillOrderConsumer consumer(boolean batch) { return new SeckillOrderConsumer(mapper,orders,ledger,statuses,new CompletionMetrics(),config(batch)); }
+    private SeckillOrderConsumer consumer(boolean batch) { return new SeckillOrderConsumer(mapper,orders,ledger,statuses,new CompletionMetrics(),config(batch),mock(com.voucherx.recovery.FaultInjector.class)); }
     private Message delivery(SeckillOrderMessage value,long tag) throws Exception {
         var props=new MessageProperties();props.setDeliveryTag(tag);return new Message(mapper.writeValueAsBytes(value),props);
     }

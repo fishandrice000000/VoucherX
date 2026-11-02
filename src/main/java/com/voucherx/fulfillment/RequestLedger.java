@@ -58,6 +58,7 @@ public class RequestLedger {
     /** 调用者必须处于扣库存/建单的同一事务中。 */
     public RequestRecord guard(SeckillOrderMessage message) {
         var c=gate.lock(message.voucherId());
+        if(find(message.requestId())==null) throw new OrderBusinessException(OrderFailure.INVALID_REQUEST,"无持久化受理依据");
         RequestRecord r=lock(message.requestId());
         if(!r.matches(message)) throw new OrderBusinessException(OrderFailure.INVALID_REQUEST,"消息身份/布局/代次不匹配");
         if(!"NORMAL".equals(c.state()) || c.epoch()!=message.epoch()) throw new StaleDeliveryException();
@@ -77,6 +78,7 @@ public class RequestLedger {
     @Transactional
     public boolean fail(SeckillOrderMessage message,String reason) {
         var c=gate.lock(message.voucherId());
+        if(find(message.requestId())==null) return false;
         RequestRecord r=lock(message.requestId());
         if(!r.matches(message) || !"NORMAL".equals(c.state()) || c.epoch()!=r.epoch()) return false;
         if("SUCCEEDED".equals(r.phase())) return false;

@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OrderPersistenceService {
 
+    private final com.voucherx.recovery.FaultInjector faults;
     private final com.voucherx.fulfillment.RequestLedger ledger;
     private final com.voucherx.commerce.CommerceService commerce;
     private final VoucherOrderMapper orderMapper;
@@ -34,7 +35,8 @@ public class OrderPersistenceService {
                                    SeckillVoucherMapper seckillVoucherMapper,
                                    SeckillVoucherBucketMapper bucketMapper,
                                    SeckillProperties properties,
-                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger,com.voucherx.commerce.CommerceService commerce) {
+                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger,com.voucherx.commerce.CommerceService commerce,com.voucherx.recovery.FaultInjector faults) {
+        this.faults=faults;
         this.commerce = commerce;
         this.ledger = ledger;
         this.orderMapper = orderMapper;
@@ -94,13 +96,16 @@ public class OrderPersistenceService {
         orderMapper.insert(order);
         commerce.initializePurchase(order.getId(),message.voucherId());
         ledger.succeed(message.requestId(),order.getId());
+        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),message.messageId());
         return new OrderPersistResult(order.getId(), true);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {
         // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
-        return messages.stream().map(this::persist).toList();
+        var results=messages.stream().map(this::persist).toList();
+        faults.hit(com.voucherx.recovery.FaultPoint.BATCH_BEFORE_COMMIT,messages.getFirst().requestId(),messages.getFirst().messageId());
+        return results;
     }
 
     private Integer deductSingleStock(SeckillOrderMessage message, SeckillVoucher activity) {

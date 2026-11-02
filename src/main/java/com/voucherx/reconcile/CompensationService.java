@@ -13,9 +13,11 @@ import java.util.UUID;
 
 @Service
 public class CompensationService {
+    private final com.voucherx.recovery.FaultInjector faults;
     private final JdbcTemplate db;private final RequestLedger ledger;private final ActivityGate gate;
     private final SeckillStockService stock;private final RepairAudit audit;private final Clock clock;private final ReconcileProperties config;
-    public CompensationService(JdbcTemplate db,RequestLedger ledger,ActivityGate gate,SeckillStockService stock,RepairAudit audit,Clock clock,ReconcileProperties config) {
+    public CompensationService(JdbcTemplate db,RequestLedger ledger,ActivityGate gate,SeckillStockService stock,RepairAudit audit,Clock clock,ReconcileProperties config,com.voucherx.recovery.FaultInjector faults) {
+        this.faults=faults;
         this.db=db;this.ledger=ledger;this.gate=gate;this.stock=stock;this.audit=audit;this.clock=clock;this.config=config;
     }
     /** 显式关闭或已确定失败：请求终态与补偿意图在同一事务中提交。 */
@@ -33,6 +35,12 @@ public class CompensationService {
         db.update("UPDATE tb_seckill_request SET phase='CLOSED',reason=?,updated_at_ms=? WHERE request_id=?",reason,now,id);
         db.update("INSERT IGNORE INTO tb_compensation(request_id,compensation_id,next_at_ms,reason,updated_at_ms) VALUES (?,?,?,?,?)",id,UUID.randomUUID().toString(),now,reason,now);
         db.update("UPDATE tb_outbox SET state='DONE',claim_token=NULL,last_result='REQUEST_CLOSED' WHERE request_id=?",id);
+        org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override public void afterCommit() {
+                    faults.hit(com.voucherx.recovery.FaultPoint.COMPENSATION_INTENT_COMMITTED,id,r.eventId());
+                }
+            });
         audit.record(id,r.voucherId(),"CLOSE_REQUEST","phase="+r.phase()+",reservation="+r.reservation()+",epoch="+epoch,"COMPENSATION_PENDING");
     }
     @Transactional
@@ -50,6 +58,7 @@ public class CompensationService {
             throw new BusinessException(ErrorCode.CONFLICT,"补偿屏障/归属失效");
         // 持有活动共享锁与请求锁进行有超时的 Redis 调用，冻结/重建不能越过此步骤。
         boolean released=stock.release(r.voucherId(),r.userId(),id,(String)compensation.get("reason"),epoch);
+        if(released) faults.hit(com.voucherx.recovery.FaultPoint.COMPENSATION_AFTER_RELEASE,id,r.eventId());
         int attempts=((Number)compensation.get("attempts")).intValue()+1;
         String outcome=released?"RELEASED":attempts>=config.maxAttempts()?"ISOLATED":"PENDING";
         db.update("UPDATE tb_compensation SET state=?,attempts=?,next_at_ms=?,updated_at_ms=? WHERE request_id=?",outcome,attempts,clock.millis()+config.retryMillis(),clock.millis(),id);

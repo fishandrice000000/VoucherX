@@ -106,6 +106,40 @@ voucherx:
   mq:
     max-retries: 3
     retry-ttl-millis: 5000
+  delivery:
+    enabled: ${DELIVERY_ENABLED:true}
+    interval-millis: 250
+    scan-size: 32
+    lease-millis: 30000
+    max-attempts: 8
+    retry-millis: 1000
+    batch-enabled: ${DELIVERY_BATCH_ENABLED:false}
+    batch-size: 16
+    batch-bytes: 1048576
+    batch-wait-millis: 50
+  commerce:
+    simulation-enabled: ${PAYMENT_SIMULATION_ENABLED:false}
+    payment-timeout-millis: 900000
+    expiry-interval-millis: 10000
+    scan-size: 100
+  reconcile:
+    enabled: ${RECONCILE_ENABLED:false}
+    interval-millis: 5000
+    scan-size: 100
+    stale-millis: 30000
+    retry-millis: 5000
+    max-attempts: 8
+  recovery:
+    page-size: 200
+    max-records: 100000
+  fault:
+    enabled: ${FAULT_INJECTION_ENABLED:false}
+    point: ${FAULT_POINT:}
+    subject: ${FAULT_SUBJECT:*}
+    action: ${FAULT_ACTION:FAIL}
+    run-id: ${FAULT_RUN_ID:manual}
+    wait-millis: 5000
+    evidence-path: tmp/fault/evidence.jsonl
   experiment:
     # 仅用于隔离实验，默认关闭；不通过产品 HTTP 接口修改。
     enabled: ${EXPERIMENT_ENABLED:false}

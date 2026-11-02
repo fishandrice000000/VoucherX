@@ -21,9 +21,11 @@ import java.util.UUID;
 public class SeckillService {
     private final SeckillVoucherMapper activities; private final VoucherOrderMapper orders;
     private final SeckillStockService stock; private final RequestLedger ledger;
+    private final com.voucherx.recovery.FaultInjector faults;
     private final SeckillAdmissionService admission; private final Clock clock;
     public SeckillService(SeckillVoucherMapper activities,VoucherOrderMapper orders,SeckillStockService stock,
-            RequestLedger ledger,SeckillAdmissionService admission,Clock clock) {
+            RequestLedger ledger,SeckillAdmissionService admission,Clock clock,com.voucherx.recovery.FaultInjector faults) {
+        this.faults=faults;
         this.activities=activities;this.orders=orders;this.stock=stock;this.ledger=ledger;this.admission=admission;this.clock=clock;
     }
     public SeckillAcceptResponse seckill(Long user,Long voucher) { return seckill(user,voucher,null); }
@@ -66,7 +68,9 @@ public class SeckillService {
             });
         }
         // 发生异常时保留 INTENT 和 Redis 归属证据，扫描可重新完成受理。
+        faults.hit(com.voucherx.recovery.FaultPoint.RESERVE_DONE,r.requestId(),r.eventId());
         ledger.accept(r.requestId());
+        faults.hit(com.voucherx.recovery.FaultPoint.ACCEPT_COMMITTED,r.requestId(),r.eventId());
         return new SeckillAcceptResponse(r.requestId(),SeckillRequestStatus.PROCESSING);
     }
     private SeckillAcceptResponse replay(RequestRecord r,long voucher) {

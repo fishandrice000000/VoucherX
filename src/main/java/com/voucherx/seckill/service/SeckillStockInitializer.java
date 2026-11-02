@@ -73,6 +73,7 @@ public class SeckillStockInitializer implements ApplicationRunner {
 
     private boolean initializeIfSafe(SeckillVoucher activity) {
         Long voucherId = activity.getVoucherId();
+        db.update("INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (?)",voucherId);
         if (stockService.exists(voucherId)) {
             return true;
         }

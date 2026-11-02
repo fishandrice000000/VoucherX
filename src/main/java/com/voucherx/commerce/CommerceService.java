@@ -17,8 +17,9 @@ public class CommerceService {
         final String table;Kind(String table) { this.table=table; }
     }
     public record Receipt(String eventId,String outcome,String orderState) {}
+    private final com.voucherx.recovery.FaultInjector faults;
     private final JdbcTemplate db;private final Clock clock;private final CommerceProperties config;
-    public CommerceService(JdbcTemplate db,Clock clock,CommerceProperties config) {this.db=db;this.clock=clock;this.config=config;}
+    public CommerceService(JdbcTemplate db,Clock clock,CommerceProperties config,com.voucherx.recovery.FaultInjector faults) {this.db=db;this.clock=clock;this.config=config;this.faults=faults;}
     /** 在创建秒杀订单的现有事务中调用，固定付款及权益规则快照。 */
     public void initializePurchase(long orderId,long voucherId) {
         var v=db.queryForMap("SELECT pay_value,actual_value,shop_id,min_spend,validity_seconds FROM tb_voucher WHERE id=?",voucherId);
@@ -48,6 +49,7 @@ public class CommerceService {
                 id,token,couponId,number(c,"version"));
         if(changed!=1) throw new BusinessException(ErrorCode.CONFLICT,"优惠券已被其他订单锁定");
         action(couponId,id,token,"LOCK",now);
+        faults.hit(com.voucherx.recovery.FaultPoint.COUPON_LOCKED,String.valueOf(id),token);
         return id;
     }
     private long discount(Map<String,Object> c,long user,long shop,long original,long now) {
@@ -81,6 +83,7 @@ public class CommerceService {
         }
         db.update("INSERT INTO tb_payment_event(event_id,order_kind,order_id,user_id,amount,success,outcome,order_state,created_at_ms) VALUES (?,?,?,?,?,?,?,?,?)",
                 eventId,kind.name(),id,user,amount,success,outcome,state,now);
+        faults.hit(com.voucherx.recovery.FaultPoint.PAYMENT_BEFORE_COMMIT,String.valueOf(id),eventId);
         return new Receipt(eventId,outcome,state);
     }
     private void issue(Map<String,Object> order,long now) {

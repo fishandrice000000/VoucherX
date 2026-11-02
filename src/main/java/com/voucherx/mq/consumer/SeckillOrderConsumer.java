@@ -24,11 +24,13 @@ import java.util.List;
 @Component
 public class SeckillOrderConsumer {
     private static final Logger log=LoggerFactory.getLogger(SeckillOrderConsumer.class);
+    private final com.voucherx.recovery.FaultInjector faults;
     private final ObjectMapper mapper; private final OrderPersistenceService orders;
     private final RequestLedger ledger; private final SeckillRequestStatusStore statuses;
     private final CompletionMetrics metrics; private final DeliveryProperties config;
     public SeckillOrderConsumer(ObjectMapper mapper,OrderPersistenceService orders,RequestLedger ledger,
-            SeckillRequestStatusStore statuses,CompletionMetrics metrics,DeliveryProperties config) {
+            SeckillRequestStatusStore statuses,CompletionMetrics metrics,DeliveryProperties config,com.voucherx.recovery.FaultInjector faults) {
+        this.faults=faults;
         this.mapper=mapper;this.orders=orders;this.ledger=ledger;this.statuses=statuses;this.metrics=metrics;this.config=config;
     }
     private record Item(Message delivery,SeckillOrderMessage message) {}
@@ -60,6 +62,7 @@ public class SeckillOrderConsumer {
             catch(Exception ex) { metrics.recordFailure(started);results=null; }
             finally { metrics.end(); }
             if(results!=null) {
+                faults.hit(com.voucherx.recovery.FaultPoint.BATCH_AFTER_COMMIT_BEFORE_ACK,batch.getFirst().message().requestId(),batch.getFirst().message().messageId());
                 for(int i=0;i<batch.size();i++) {
                     if(results.get(i).created()) metrics.recordCreated(started);else metrics.recordDuplicate(started);
                     success(batch.get(i),results.get(i),channel);
@@ -90,6 +93,7 @@ public class SeckillOrderConsumer {
             channel.basicNack(tag(item.delivery()),false,false);
             return;
         } finally { metrics.end(); }
+        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_AFTER_COMMIT_BEFORE_ACK,item.message().requestId(),item.message().messageId());
         if(result.created()) metrics.recordCreated(started);else metrics.recordDuplicate(started);
         success(item,result,channel);
     }

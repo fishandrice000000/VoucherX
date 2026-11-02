@@ -14,8 +14,10 @@ import java.util.UUID;
 public class OutboxDispatcher {
     private static final Logger log=LoggerFactory.getLogger(OutboxDispatcher.class);
     private final JdbcTemplate db; private final RequestLedger ledger; private final ActivityGate gate;
+    private final com.voucherx.recovery.FaultInjector faults;
     private final SeckillMessagePublisher publisher; private final DeliveryProperties config; private final Clock clock;
-    public OutboxDispatcher(JdbcTemplate db,RequestLedger ledger,ActivityGate gate,SeckillMessagePublisher publisher,DeliveryProperties config,Clock clock) {
+    public OutboxDispatcher(JdbcTemplate db,RequestLedger ledger,ActivityGate gate,SeckillMessagePublisher publisher,DeliveryProperties config,Clock clock,com.voucherx.recovery.FaultInjector faults) {
+        this.faults=faults;
         this.db=db;this.ledger=ledger;this.gate=gate;this.publisher=publisher;this.config=config;this.clock=clock;
     }
     @Scheduled(fixedDelayString="${voucherx.delivery.interval-millis:250}")
@@ -26,8 +28,11 @@ public class OutboxDispatcher {
     public int dispatch() {
         long now=clock.millis();
         var ids=db.queryForList("""
-                SELECT event_id FROM tb_outbox WHERE (state='PENDING' AND next_at_ms<=?)
-                   OR (state='CLAIMED' AND lease_until_ms<=?) ORDER BY next_at_ms LIMIT ?
+                SELECT o.event_id FROM tb_outbox o JOIN tb_seckill_request r ON o.request_id=r.request_id
+                  JOIN tb_activity_control c ON c.voucher_id=r.voucher_id
+                  WHERE c.state='NORMAL' AND c.epoch=r.epoch AND r.phase='ACCEPTED'
+                   AND ((o.state='PENDING' AND o.next_at_ms<=?) OR (o.state='CLAIMED' AND o.lease_until_ms<=?))
+                  ORDER BY o.next_at_ms LIMIT ?
                 """,String.class,now,now,config.scanSize());
         int sent=0;
         for(String id:ids) {
@@ -42,9 +47,11 @@ public class OutboxDispatcher {
             int attempt=((Number)row.get("attempts")).intValue();
             if(r==null || r.terminal()) { finish(id,token,"DONE","BUSINESS_TERMINAL",now);continue; }
             if(!gate.normal(r.voucherId(),r.epoch())) { finish(id,token,"PENDING","ACTIVITY_FROZEN",now+config.retryMillis());continue; }
+            faults.hit(com.voucherx.recovery.FaultPoint.OUTBOX_BEFORE_SEND,r.requestId(),id);
             PublishResult result;
             try { result=publisher.publish(r.message()); }
             catch(Exception ex) { result=PublishResult.UNKNOWN; log.warn("事件发布异常，eventId={}",id,ex); }
+            faults.hit(com.voucherx.recovery.FaultPoint.OUTBOX_AFTER_CONFIRM,r.requestId(),id);
             if(result==PublishResult.CONFIRMED) { sent+=finish(id,token,"SENT",result.name(),now); }
             else finish(id,token,attempt>=config.maxAttempts()?"QUARANTINED":"PENDING",result.name(),now+config.backoff(attempt));
         }

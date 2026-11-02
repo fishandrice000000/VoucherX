@@ -49,6 +49,9 @@ public class RedisScriptConfig {
         return script("lua/admission_policy_update.lua");
     }
 
+    @Bean
+    public DefaultRedisScript<Long> recoveryPublishScript() { return script("lua/recovery_publish.lua"); }
+
     private DefaultRedisScript<Long> script(String classpath) {
         try {
             ClassPathResource resource = new ClassPathResource(classpath);

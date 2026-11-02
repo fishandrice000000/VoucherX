@@ -38,7 +38,8 @@ public class RedisAdmissionStore {
                     String.valueOf(global.sharedRate()),
                     String.valueOf(global.sharedCapacity()),
                     String.valueOf(global.activityRate()),
-                    String.valueOf(global.activityCapacity())
+                    String.valueOf(global.activityCapacity()),
+                    properties.mode().name()
             );
             if (result == null) {
                 return AdmissionDecision.INVALID_POLICY;

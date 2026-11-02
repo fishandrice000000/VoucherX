@@ -6,7 +6,7 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 
 在此基础上完成了 **技术深化 01 的 MySQL 库存桶实验**：确认并定位了 MySQL 单库存行锁热点，但修正测量与持久化配置后，BUCKET 模式未达到容量 +20% 门槛，且在 400 req/s 下出现一次退化。因此**默认保持 SINGLE，BUCKET 仅作为显式实验能力**；Redis 侧未发现热点，**没有实现 Redis 库存分片**。
 
-**技术深化 02** 已实现本地令牌桶、Redis 共享/活动双层固定限流和有界消费反馈，以及 AIMD 控制器；默认 `OFF`。单轮探索性实验测得默认持久化 `R=175 req/s`，自适应在能力下降中降速/恢复但未达到延迟与恢复门槛，未通过启用验收；三组 3 次正式重复尚未完成。
+**技术深化 02** 已实现本地令牌桶、Redis 共享/活动双层固定限流、有界消费反馈和 AIMD 控制器；默认 `OFF`。已修复拒绝分支重复补充令牌、自适应缺失策略退回永久默认值两个正确性问题；默认持久化下 `OFF` 测得 `R=175 req/s`。修复前的 FIXED/ADAPTIVE 探索数据已作废，三组正式重复待重跑；自适应未通过启用验收。
 
 ## 技术栈
 
@@ -24,7 +24,7 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 | 商户查询 | 按 ID 查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建与安全释放锁 |
 | 优惠券秒杀 | Redis Lua 原子预扣、一人一单、RabbitMQ 异步下单、Publisher Confirm、mandatory 路由失败处理、手动 ACK、有界重试、死信队列、MySQL 条件扣库存与唯一约束、异步结果查询 |
 | MySQL 库存桶（方向 01，实验） | 活动级 `SINGLE / BUCKET` 模式、128 桶布局、固定起始桶与有界跨桶尝试、实际桶写入订单、桶编号完整性校验、布局初始化与兼容迁移；未通过启用验收，默认不启用 |
-| 多级限流（方向 02，实验） | `OFF / FIXED / ADAPTIVE` 模式、本地令牌桶、Redis 共享/活动双层令牌桶、策略 TTL、完成 TPS/队列/连接池反馈、AIMD、429/503 拒绝语义；单轮探索未通过延迟/恢复门槛，默认 `OFF` |
+| 多级限流（方向 02，实验） | `OFF / FIXED / ADAPTIVE` 模式、本地令牌桶、Redis 共享/活动双层令牌桶、策略 TTL、完成 TPS/队列/连接池反馈、AIMD、429/503 拒绝语义；已修复令牌结算/策略缺失问题，正式对照待重跑，默认 `OFF` |
 
 V1 不包含支付、核销、Redis Stream、Kafka/RocketMQ、Redis 库存分片、批量落库、自动化对账或补偿中心。方向 02 的限流/自适应是默认关闭的实验能力；MySQL 库存桶仅保留为显式配置的实验能力，默认活动继续使用 `SINGLE`。
 
@@ -161,12 +161,12 @@ SeckillIntegrationTest                   21 passed
 SeckillConsumerReliabilityTest            2 passed
 LocalTokenBucketTest                      4 passed
 AdaptiveRateControllerTest                7 passed
-AdmissionRedisPolicyTest                  3 passed
+AdmissionRedisPolicyTest                  7 passed
 SeckillAdmissionIntegrationTest           2 passed
 SeckillLocalAdmissionIntegrationTest      1 passed
 CompletionMetricsTest                     1 passed
 ----------------------------------------------------------
-合计                                     49 passed, 0 failed, 0 skipped
+合计                                     53 passed, 0 failed, 0 skipped
 ```
 
 测试覆盖登录、缓存、秒杀时间/库存/一人一单、SINGLE 与 BUCKET 两种模式下 1000 用户争抢 100 张券、桶额度除不尽、局部售罄、布局不匹配、重复消息幂等、事务回滚、路由失败释放预扣、重试与死信、异步结果查询，以及本地/Redis 限流、拒绝前无副作用、AIMD 状态转移和策略过期。详见 [测试说明](docs/v1/testing.md)、[方向 01 测试说明](docs/01/testing-01.md) 与 [方向 02 测试说明](docs/02/testing-02.md)。

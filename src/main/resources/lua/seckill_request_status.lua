@@ -50,5 +50,4 @@ end
 if ARGV[4] ~= '' then
     redis.call('HSET', key, 'reason', ARGV[4])
 end
-redis.call('EXPIRE', key, tonumber(ARGV[5]))
 return 1

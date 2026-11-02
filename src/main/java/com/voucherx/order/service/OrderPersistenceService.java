@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OrderPersistenceService {
 
+    private final com.voucherx.fulfillment.RequestLedger ledger;
     private final VoucherOrderMapper orderMapper;
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
@@ -32,7 +33,8 @@ public class OrderPersistenceService {
                                    SeckillVoucherMapper seckillVoucherMapper,
                                    SeckillVoucherBucketMapper bucketMapper,
                                    SeckillProperties properties,
-                                   TransactionDelay transactionDelay) {
+                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger) {
+        this.ledger = ledger;
         this.orderMapper = orderMapper;
         this.seckillVoucherMapper = seckillVoucherMapper;
         this.bucketMapper = bucketMapper;
@@ -42,6 +44,7 @@ public class OrderPersistenceService {
 
     @Transactional(rollbackFor = Exception.class)
     public OrderPersistResult persist(SeckillOrderMessage message) {
+        ledger.guard(message);
         // 正常重复消费：同一个 requestId 已经成功落库。
         VoucherOrder existing = orderMapper.selectByRequestId(message.requestId());
         if (existing != null) {
@@ -87,7 +90,14 @@ public class OrderPersistenceService {
         order.setCompletedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
+        ledger.succeed(message.requestId(),order.getId());
         return new OrderPersistResult(order.getId(), true);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {
+        // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
+        return messages.stream().map(this::persist).toList();
     }
 
     private Integer deductSingleStock(SeckillOrderMessage message, SeckillVoucher activity) {

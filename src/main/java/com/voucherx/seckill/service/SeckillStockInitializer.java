@@ -22,6 +22,7 @@ public class SeckillStockInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SeckillStockInitializer.class);
 
+    private final org.springframework.jdbc.core.JdbcTemplate db;
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
     private final VoucherOrderMapper orderMapper;
@@ -30,7 +31,8 @@ public class SeckillStockInitializer implements ApplicationRunner {
     public SeckillStockInitializer(SeckillVoucherMapper seckillVoucherMapper,
                                    SeckillVoucherBucketMapper bucketMapper,
                                    VoucherOrderMapper orderMapper,
-                                   SeckillStockService stockService) {
+                                   SeckillStockService stockService,org.springframework.jdbc.core.JdbcTemplate db) {
+        this.db=db;
         this.seckillVoucherMapper = seckillVoucherMapper;
         this.bucketMapper = bucketMapper;
         this.orderMapper = orderMapper;
@@ -74,6 +76,9 @@ public class SeckillStockInitializer implements ApplicationRunner {
             return true;
         }
 
+        Long pending=db.queryForObject("SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=? AND (phase IN ('INTENT','ACCEPTED') OR reservation IN ('RESERVED','UNKNOWN'))",Long.class,voucherId);
+        Long frozen=db.queryForObject("SELECT COUNT(*) FROM tb_activity_control WHERE voucher_id=? AND state<>'NORMAL'",Long.class,voucherId);
+        if(pending!=null && pending>0 || frozen!=null && frozen>0) return false;
         long existingOrders = orderMapper.countByVoucherId(voucherId);
         if (existingOrders != 0) {
             log.warn("Redis 秒杀库存缺失且已有历史订单，拒绝自动重建，voucherId={}, orders={}",

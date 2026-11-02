@@ -13,6 +13,11 @@ public record SeckillOrderMessage(
         long createdAt,
         String stockMode,
         Integer startBucketNo,
-        Integer layoutVersion
+        Integer layoutVersion,
+        long epoch
 ) {
+    public SeckillOrderMessage(String messageId,String requestId,Long userId,Long voucherId,long createdAt,
+            String stockMode,Integer startBucketNo,Integer layoutVersion) {
+        this(messageId,requestId,userId,voucherId,createdAt,stockMode,startBucketNo,layoutVersion,1);
+    }
 }

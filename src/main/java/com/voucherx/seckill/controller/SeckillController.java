@@ -28,10 +28,11 @@ public class SeckillController {
     }
 
     @PostMapping("/vouchers/{voucherId}")
-    public ResponseEntity<ApiResponse<SeckillAcceptResponse>> seckill(@PathVariable Long voucherId) {
+    public ResponseEntity<ApiResponse<SeckillAcceptResponse>> seckill(@PathVariable Long voucherId,
+            @org.springframework.web.bind.annotation.RequestHeader(value="Idempotency-Key",required=false) String key) {
         // 认证拦截器已经执行；本地突发保护在数据库查询/Redis 预扣之前。
         admissionService.acquireLocal();
-        SeckillAcceptResponse response = seckillService.seckill(UserContext.getRequired(), voucherId);
+        SeckillAcceptResponse response = seckillService.seckill(UserContext.getRequired(), voucherId, key);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(response));
     }
 

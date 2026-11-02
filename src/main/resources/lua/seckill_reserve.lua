@@ -25,6 +25,18 @@ local stockMode = ARGV[7]
 local startBucketNo = ARGV[8]
 local layoutVersion = ARGV[9]
 
+-- 活跃预留保留到明确终态/受控重建，不能以 TTL 作为恢复依据。
+local ownersKey = KEYS[4]
+local gateKey = KEYS[5]
+local epoch = ARGV[10] or '1'
+local gateEpoch = redis.call('HGET', gateKey, 'epoch') or '1'
+local gateState = redis.call('HGET', gateKey, 'state') or 'NORMAL'
+if gateEpoch ~= epoch or gateState ~= 'NORMAL' then return -6 end
+if redis.call('HGET', ownersKey, userId) == requestId then
+    local remaining = tonumber(redis.call('GET', stockKey))
+    if remaining == nil then return -1 end
+    return remaining
+end
 if redis.call('EXISTS', stockKey) == 0 then
     return -1
 end
@@ -47,6 +59,7 @@ end
 
 redis.call('DECR', stockKey)
 redis.call('SADD', usersKey, userId)
+redis.call('HSET', ownersKey, userId, requestId)
 redis.call('HSET', requestKey,
         'requestId', requestId,
         'voucherId', voucherId,
@@ -55,6 +68,6 @@ redis.call('HSET', requestKey,
         'stockMode', stockMode,
         'startBucketNo', startBucketNo,
         'layoutVersion', layoutVersion,
-        'createdAt', now)
-redis.call('EXPIRE', requestKey, 86400)
+        'epoch', epoch, 'createdAt', now)
+redis.call('PERSIST', requestKey)
 return stock - 1

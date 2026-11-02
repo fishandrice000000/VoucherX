@@ -1,29 +1,20 @@
--- 幂等释放 Redis 预扣。只允许释放尚未成功、尚未释放的请求。
--- KEYS[1] 库存 Key
--- KEYS[2] 已参与用户 Set
--- KEYS[3] 请求状态 Hash
--- ARGV[1] userId
--- ARGV[2] 释放原因
--- 返回 1 表示本次执行了释放，0 表示无需释放（重复释放或状态不允许）。
-local stockKey = KEYS[1]
-local usersKey = KEYS[2]
-local requestKey = KEYS[3]
-local userId = ARGV[1]
-local reason = ARGV[2]
-
-if redis.call('EXISTS', requestKey) == 0 then
-    return 0
-end
-local status = redis.call('HGET', requestKey, 'status')
-if status == 'RELEASED' or status == 'SUCCESS' then
-    return 0
-end
-if redis.call('SISMEMBER', usersKey, userId) == 0 then
-    return 0
-end
-
-redis.call('SREM', usersKey, userId)
-redis.call('INCR', stockKey)
-redis.call('HSET', requestKey, 'status', 'RELEASED', 'reason', reason)
-redis.call('EXPIRE', requestKey, 86400)
+-- 调用前必须在 MySQL 关闭请求，阻止同请求迟到成功。1=释放，2=已释放，负数=需隔离。
+local stockKey, usersKey, requestKey, ownersKey, gateKey = KEYS[1],KEYS[2],KEYS[3],KEYS[4],KEYS[5]
+local userId, reason, requestId, epoch = ARGV[1],ARGV[2],ARGV[3],ARGV[4]
+if (redis.call('HGET',gateKey,'epoch') or '1') ~= epoch then return -2 end
+if (redis.call('HGET',gateKey,'state') or 'NORMAL') ~= 'NORMAL' then return -2 end
+if redis.call('EXISTS',stockKey)==0 or redis.call('EXISTS',requestKey)==0 then return -3 end
+if redis.call('HGET',requestKey,'requestId')~=requestId or redis.call('HGET',requestKey,'userId')~=userId
+    or redis.call('HGET',requestKey,'epoch')~=epoch then return -3 end
+local status=redis.call('HGET',requestKey,'status')
+if status=='RELEASED' then return 2 end
+if status=='SUCCESS' then return -4 end
+if redis.call('HGET',ownersKey,userId)~=requestId then return -5 end
+local stock=tonumber(redis.call('GET',stockKey))
+if stock==nil or stock<0 then return -3 end
+redis.call('HDEL',ownersKey,userId)
+redis.call('SREM',usersKey,userId)
+redis.call('INCR',stockKey)
+redis.call('HSET',requestKey,'status','RELEASED','reason',reason)
+redis.call('PERSIST',requestKey)
 return 1

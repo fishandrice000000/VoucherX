@@ -9,6 +9,10 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  * 付款及权益字段在建单时固定，购买付款按这些快照生成用户券；JSON 使用 snake_case。
  * 整数 status 是基础建单状态，字符串 paymentStatus 才是当前付款状态。
  *
+ * <p>
+ * 新购买单由 initializePurchase 固定价格及权益；历史行的 paymentStatus 可为
+ * LEGACY_CREATED，当前模拟付款和取消均不会把它当成正常待付单。
+ *
  * @param id
  *                                  购买订单主键
  * @param requestId
@@ -34,7 +38,8 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  * @param updateTime
  *                                  数据库更新时间
  * @param paymentStatus
- *                                  PENDING_PAYMENT、PAID 或 CANCELLED
+ *                                  PENDING_PAYMENT、PAID、CANCELLED；历史单可为
+ *                                  LEGACY_CREATED
  * @param payAmount
  *                                  买券应付价格，分，不是券面额
  * @param couponFaceValue

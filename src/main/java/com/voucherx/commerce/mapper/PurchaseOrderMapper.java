@@ -18,21 +18,22 @@ public interface PurchaseOrderMapper {
      *
      * @param id
      *               券模板 ID
-     *
      * @return 模板规则；不存在为 null
      */
     VoucherTerms terms(@Param("id") long id);
 
     /**
-     * 给刚创建的订单固定金额及权益快照，置为 PENDING_PAYMENT 并设置截止时间。
+     * 在新建购买单事务中固定付款和券规则快照，并设置 PENDING_PAYMENT 及截止时刻。
+     * <p>
+     * SQL 只按 id 更新，不限定原付款状态；只应由新建单流程调用，不能把它当作付款或取消接口。
+     * 这里仍不发券，发券要等成功支付事件。
      *
      * @param id
-     *                     购买订单 ID
+     *                     本次刚创建的购买订单 ID
      * @param terms
-     *                     建单时读取的模板规则快照
+     *                     从券模板读取的买价、面额、商户、门槛和有效时长
      * @param deadline
-     *                     订单付款截止 Unix 毫秒
-     *
+     *                     购买付款截止 Unix 毫秒
      * @return 更新行数
      */
     int initialize(@Param("id") long id, @Param("terms") VoucherTerms terms, @Param("deadline") long deadline);
@@ -42,38 +43,36 @@ public interface PurchaseOrderMapper {
      *
      * @param id
      *               购买订单 ID
-     *
      * @return 购买订单；不存在为 null
      */
     PurchaseOrder find(@Param("id") long id);
 
     /**
-     * FOR UPDATE 锁住购买单，串行化付款、取消与超时关闭。
+     * FOR UPDATE 锁购买单，付款、主动取消、到期关闭均先取得这行锁；用户归属检查由服务层完成。
      *
      * @param id
      *               购买订单 ID
-     *
-     * @return 购买订单；不存在为 null
+     * @return 当前购买单快照；不存在为 null，锁由调用者事务保持
      */
     PurchaseOrder lock(@Param("id") long id);
 
     /**
-     * 仅将 PENDING_PAYMENT 条件更新为 PAID；发券和支付事件由同一服务事务完成。
+     * 仅将 PENDING_PAYMENT 条件更新为 PAID，不修改基础建单 status。
+     * <p>
+     * 服务层在同一事务先发券，再执行此更新并要求影响 1 行，最后保存支付事件；任一步失败一起回滚。
      *
      * @param id
-     *               购买订单 ID
-     *
-     * @return 成功转移为 1；状态不匹配为 0
+     *               已持锁并允许应用付款的购买订单 ID
+     * @return 成功转移为 1，状态不匹配或订单不存在为 0
      */
     int markPaid(@Param("id") long id);
 
     /**
-     * 仅将 PENDING_PAYMENT 更新为 CANCELLED，不回补秒杀库存。
+     * 仅把待付款购买单改为 CANCELLED；不删除订单、不发行用户券，也不修改活动库存或领取资格。
      *
      * @param id
-     *               购买订单 ID
-     *
-     * @return 成功转移为 1；状态不匹配为 0
+     *               调用方已持锁的购买订单 ID
+     * @return 更新行数；不处于 PENDING_PAYMENT 时为 0
      */
     int cancel(@Param("id") long id);
 
@@ -84,7 +83,6 @@ public interface PurchaseOrderMapper {
      *                  扫描时刻，Unix 毫秒
      * @param limit
      *                  最多返回条数
-     *
      * @return 有界候选订单 ID 列表
      */
     List<Long> expiredIds(@Param("now") long now, @Param("limit") int limit);

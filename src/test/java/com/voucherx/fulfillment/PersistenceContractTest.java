@@ -84,7 +84,15 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         return json.readTree(json.writeValueAsString(value));
     }
 
-    /** 验证购买单、用户券和消费单的类型化 HTTP 响应仍与原数据库 Map JSON 契约一致。 */
+    /**
+     * 通过真实 HTTP 查询购买单、用户券及消费单，将响应 data 与独立数据库 Map 序列化的 JSON 树逐项比较。
+     * <p>
+     * 覆盖 snake_case 字段、金额、时间和空锁字段等当前响应契约，证明类型化模型没有顺手改变这组接口 JSON。
+     * 这不验证所有请求/错误响应，也不是付款取消并发测试。
+     *
+     * @throws Exception
+     *                       HTTP 测试或 JSON 转换失败
+     */
     @Test
     void typedResponsesPreserveDatabaseMapJsonContract() throws Exception {
         long id = purchase();
@@ -109,7 +117,15 @@ class PersistenceContractTest extends AbstractIntegrationTest {
                         jdbcTemplate.queryForMap("SELECT * FROM tb_consumption_order WHERE id=?", consumption)));
     }
 
-    /** 两线程同时使用同一张券，最终只提交一个消费单和一条 LOCK 动作，券锁归属指向成功订单。 */
+    /**
+     * 两个线程经屏障同时用同一张已发行券下消费单，结果必须一成功一业务拒绝。
+     * <p>
+     * 独立查库验证只提交一张消费单和一条 LOCK 动作，券的 lockOrderId 指向成功消费单。
+     * 这条用例检验并发锁券，不代表已枚举付款、取消、到期之间的全部并发交错。
+     *
+     * @throws Exception
+     *                       并发任务、屏障或等待失败
+     */
     @Test
     void concurrentConsumptionCommitsOnlyOneOrderAndCouponLock() throws Exception {
         long coupon = issuedCoupon();
@@ -138,7 +154,11 @@ class PersistenceContractTest extends AbstractIntegrationTest {
                 jdbcTemplate.queryForObject("SELECT id FROM tb_consumption_order", Long.class));
     }
 
-    /** 购买付款提交前注入异常，验证发券、支付事件和订单 PAID 状态一起回滚。 */
+    /**
+     * 在购买付款 PAYMENT_BEFORE_COMMIT 处注入异常，实际经过 Spring 事务代理后应回滚。
+     * <p>
+     * 再次读取订单仍 PENDING_PAYMENT，用户券表和支付事件表都为 0；验证发券、改付款状态和事件记录共用事务。
+     */
     @Test
     void paymentFailureRollsBackCouponEventAndOrderStateTogether() {
         long id = purchase();
@@ -151,7 +171,11 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_payment_event", Integer.class)).isZero();
     }
 
-    /** 锁券后注入异常，验证自增消费单、券锁和 LOCK 动作一起回滚，券仍可用。 */
+    /**
+     * 在消费下单 COUPON_LOCKED 后注入异常，验证已插入消费单、券锁及 LOCK 动作共用回滚。
+     * <p>
+     * 独立查询消费单和动作记录均为 0，券仍 AVAILABLE；这里验证记录回滚，不把自增 ID 的分配当成业务提交证据。
+     */
     @Test
     void consumptionFailureRollsBackGeneratedOrderAndLockTogether() {
         long coupon = issuedCoupon();

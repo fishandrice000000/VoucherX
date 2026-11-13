@@ -11,14 +11,20 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 从“抢到购买资格”继续到“付款拿券、消费用券”的交易服务。
+ * 04 的交易编排，接续 03 已建好的购买单，完成买券付款、用户券发行、消费锁券、核销和关闭。
  * <p>
- * 购买订单由秒杀消费者创建，initializePurchase 在建单事务中固定金额和权益规则。
- * 购买付款在 simulate 的单个事务里完成发券、改为 PAID 和保存支付事件；
- * 消费下单在 consume 的事务里插消费单并锁券，消费付款再在 simulate 的事务里核销。
+ * initializePurchase 在建单现有事务中固定规则；simulate 在交易事务中联合发券/核销、付款状态和支付事件。
+ * consume 联合插消费单、绑定券锁和 LOCK 动作；取消/到期则联合关闭消费单与 RELEASE 动作。
  * <p>
- * 金额统一使用分，绝对时刻使用 Unix 毫秒，权益有效时长使用秒。
- * 需要同时操作订单和券时统一按“订单 → 券”加锁，支付事件幂等键与抢券幂等键分别管理。
+ * 金额为分，绝对时刻为 Unix 毫秒，有效时长为秒。操作订单及券时统一按订单 → 券加锁；
+ * lockToken 标识哪一轮消费锁归属，version 支持条件更新，两者都不等于数据库行锁本身。
+ * <p>
+ * 带 Transactional 的公开方法使用默认 REQUIRED：HTTP/任务调用没有外层事务时由本次调用提交，已有事务则加入外层。
+ * 这是本地模拟支付协议，没有第三方资金清算和已付款退款流程。
+ *
+ * @see CommerceController
+ * @see CommerceRules
+ * @see CommerceExpiryJob
  */
 @Service
 public class CommerceService {
@@ -37,14 +43,18 @@ public class CommerceService {
     }
 
     /**
-     * 支付事件的处理回执；重放同一事件时返回原先保存的结果。
+     * 支付事件的历史回执，字段描述该事件当次处理的结果。
+     * <p>
+     * 相同 eventId 重放返回原快照；例如失败事件记录 PENDING_PAYMENT 后订单再被取消，重放失败事件仍可返回原
+     * PENDING_PAYMENT。
+     * 查询订单当前状态应走 order，不把回执快照当作实时查询。
      *
      * @param eventId
-     *                       支付事件幂等键
+     *                       本次或被重放的支付事件幂等键
      * @param outcome
-     *                       APPLIED、FAILED_ATTEMPT、ALREADY_PAID 或冲突等结果
+     *                       APPLIED、FAILED_ATTEMPT、ALREADY_PAID 或冲突分类
      * @param orderState
-     *                       本事件处理后保存的付款状态；重放时是原事件快照
+     *                       此事件原先处理后保存的订单付款状态
      */
     public record Receipt(String eventId, String outcome, String orderState) {
     }
@@ -72,15 +82,20 @@ public class CommerceService {
     }
 
     /**
-     * 在调用者已有的秒杀建单事务中读取券模板，将买券价格、面额、商户、门槛和有效时长固定到购买订单。
+     * 在新购买单创建的现有事务中读取模板，把买券价格、券面额、商户、门槛及有效时长固定到订单。
      * <p>
-     * 同时设置 PENDING_PAYMENT 和付款截止时刻；以后发券按订单快照执行，不重新读取模板。
-     * 本方法自身不开事务，也尚未付款或创建用户券。
+     * 例如模板买价 1000 分、面额 2000 分、门槛 5000 分、有效 604800 秒，付款发券以后只按这份订单快照解释权益。
+     * 验证金额和有效时长后，设置 PENDING_PAYMENT 与当前业务时刻加配置超时的截止（默认约 15 分钟）。
+     * 本方法无事务注解，依赖建单调用者；尚未付款，也未生成用户券。
+     * <p>
+     * Mapper 只按订单 ID 更新，没有旧状态条件，调用前提是刚创建的新单，不能把它当作重置历史付款状态的接口。
      *
      * @param orderId
-     *                      刚插入并取得自增主键的购买订单 ID
+     *                      本次刚插入的购买订单 ID
      * @param voucherId
-     *                      订单对应的券模板/活动 ID
+     *                      该订单绑定的券模板/活动 ID
+     * @see com.voucherx.order.service.OrderPersistenceService#persist
+     * @see com.voucherx.commerce.mapper.PurchaseOrderMapper#initialize
      */
     public void initializePurchase(long orderId, long voucherId) {
         var v = purchases.terms(voucherId);
@@ -93,24 +108,32 @@ public class CommerceService {
     }
 
     /**
-     * 创建消费订单并将用户券 AVAILABLE → LOCKED，两项写入在同一事务中提交或回滚。
+     * 在同一事务中创建待付消费单、把用户券 AVAILABLE→LOCKED 并写 LOCK 动作。
+     * <ol>
+     * <li>普通读券，按本次捕获的 now 初验归属、商户、有效期、状态及门槛，计算 min(面额, 原额)。</li>
+     * <li>生成随机 lockToken，插消费单保存原额、优惠、应付及令牌，通过 GeneratedId 取得真实自增订单 ID。</li>
+     * <li>再 FOR UPDATE 锁券，用同一个 now 复核可用条件；按 AVAILABLE 和 version 条件绑定订单 ID/令牌，更新必须为
+     * 1 行。</li>
+     * <li>写 LOCK 动作后由事务提交；锁券或后续步骤失败，已插消费单也回滚。</li>
+     * </ol>
      * <p>
-     * 先普通读券校验并计算优惠，再插入待付消费单取得自增 ID；随后锁券行、复核归属和可用性，
-     * 按状态及 version 条件绑定消费单 ID 与随机 lockToken，并写 LOCK 动作。
+     * 例如券 4001 面额 2000 分，原额 10000 分，优惠 2000、应付 8000；截止取配置超时与券失效时刻较早者。
+     * now 在初读后捕获，锁后校验复用它，不是锁后重新读取时钟；后续付款仍会使用自己的时间检查期限。
      * <p>
-     * 例如原价 10000 分、面额 2000 分，优惠 2000 分，应付 8000 分。
-     * 付款截止取配置超时和券失效时刻的较早值；锁券只保留使用资格，核销要等消费付款成功。
+     * 插订单后锁券与付款/关闭的订单 → 券顺序一致。锁定只保留这张券的使用归属，券尚未 USED，也不再扣秒杀库存。
      *
      * @param user
      *                     当前登录用户 ID
      * @param shop
-     *                     实际消费商户 ID
+     *                     消费商户 ID
      * @param couponId
-     *                     用户券 ID，不是模板或活动 ID
+     *                     用户券 ID，不是活动 ID
      * @param original
-     *                     消费原价，单位分
-     *
-     * @return 新消费订单 ID；经事务代理正常返回时订单与锁券均已提交
+     *                     原消费金额，分，当前简化模型由请求传入
+     * @return 新消费订单 ID；最终提交取决于当前最外层事务边界
+     * @see CommerceRules#discount
+     * @see com.voucherx.commerce.mapper.ConsumptionOrderMapper#insert
+     * @see com.voucherx.commerce.mapper.UserCouponMapper#tryLock
      */
     @Transactional
     public long consume(long user, long shop, long couponId, long original) {
@@ -150,7 +173,6 @@ public class CommerceService {
      *                     消费原价，分
      * @param now
      *                     本次操作时刻，Unix 毫秒
-     *
      * @return 不超过原价的实际优惠额，分
      */
     private long discount(UserCoupon c, long user, long shop, long original, long now) {
@@ -159,30 +181,39 @@ public class CommerceService {
     }
 
     /**
-     * 处理一个模拟支付事件，订单行锁串行化同一订单的付款及关闭操作。
+     * 在订单锁保护下处理一个模拟支付事件：先检查开关/格式，再核对订单归属和金额，然后处理幂等及状态分支。
      * <p>
-     * 先要求模拟开关开启、事件格式合法、用户归属和金额匹配。同 eventId 已存在且内容相同，
-     * 返回原回执；内容冲突则拒绝。成功且未超时的待付订单进入 APPLIED：购买单发券，消费单核销，
-     * 随后改订单为 PAID 并保存支付事件，全部在同一 MySQL 事务中完成。
+     * 相同 eventId 已有记录时，逐项核对类型、订单、用户、金额和 success；相同返回原回执，冲突抛错。
+     * 同订单行锁串行化它的付款和关闭，全局 eventId 主键另为跨订单的事件碰撞兜底。
+     * <ul>
+     * <li>APPLIED：购买单 issue，消费单 redeem，再条件写 PAID，必须更新 1 行。</li>
+     * <li>CONFLICT_EXPIRED：关闭仍待付的超时订单，消费单还释放自己的券锁。</li>
+     * <li>其他结果：只保存本事件回执，保留当前订单状态。</li>
+     * </ul>
      * <p>
-     * success=false 只记录 FAILED_ATTEMPT，不关闭订单；迟到的成功付款会走过期关闭分支。
-     * 订单已付款、已取消等结果也记录回执，outcome 描述事件是否实际应用，不能只看 success 输入。
-     * 本入口模拟支付结果，不会向外部支付机构扣款。
+     * 发券/核销或关闭、订单状态和支付事件在一个事务里提交或回滚。success=false 优先得到 FAILED_ATTEMPT，
+     * 即使订单已过截止，也不在此失败分支主动关闭；PAID 收到新的成功事件得到 ALREADY_PAID，取消单收到迟到成功得到
+     * CONFLICT_TERMINAL。
+     * <p>
+     * 新事件按新的 now 决策，旧事件重放不重新解释原 outcome/orderState。默认模拟开关关闭，入口返回业务拒绝。
      *
      * @param user
      *                    当前登录用户 ID
      * @param kind
-     *                    PURCHASE 买券或 CONSUMPTION 消费
+     *                    非空订单类型 PURCHASE 或 CONSUMPTION
      * @param id
-     *                    相应类型的订单 ID
+     *                    该类型中的订单 ID
      * @param eventId
-     *                    支付事件幂等键，同事件重试需复用
+     *                    全局支付事件幂等键，1 到 64 个允许字符
      * @param amount
-     *                    事件金额，分，必须等于订单应付
+     *                    声明支付金额，分，必须等于订单应付
      * @param success
-     *                    此次模拟事件声明的支付成功与否
-     *
-     * @return 处理结果及订单付款状态；经事务代理正常返回时相关数据库写入已提交
+     *                    本次模拟事件的支付成功声明
+     * @return 本事件处理结果；重放时为历史回执，提交受最外层事务边界决定
+     * @see CommerceRules#paymentOutcome
+     * @see #issue
+     * @see #redeem
+     * @see #closeLocked
      */
     @Transactional
     public Receipt simulate(long user, Kind kind, long id, String eventId, long amount, boolean success) {
@@ -221,28 +252,35 @@ public class CommerceService {
     }
 
     /**
-     * 按购买订单权益快照生成 AVAILABLE 用户券；有效期从本次成功付款时刻开始计算。
+     * 按购买单保存的权益快照发行一张 AVAILABLE 用户券，validFrom 为本次付款处理 now。
      * <p>
-     * 在 simulate 的同一事务内调用，购买订单唯一约束配合付款状态、事件幂等避免重复发券。
+     * validUntil 用有效秒数乘 1000 再加 now，使用精确整数运算检查溢出；不重新读取活动当前模板。
+     * 来源购买单唯一约束防止重复发行，调用者还持有购买单锁并核验待付状态。
+     * 此插入与 PAID、支付事件在 simulate 同一事务中完成，失败一起回滚。
      *
      * @param order
-     *                  已锁定、待付款的购买订单快照
+     *                  已持锁、允许应用付款的购买单快照
      * @param now
-     *                  本次付款处理时刻，Unix 毫秒
+     *                  本次付款处理 Unix 毫秒
+     * @see com.voucherx.commerce.mapper.UserCouponMapper#issue
      */
     private void issue(PurchaseOrder order, long now) {
         userCoupons.issue(order, now, Math.addExact(now, Math.multiplyExact(order.couponValiditySeconds(), 1000)));
     }
 
     /**
-     * 锁住消费单关联的券，核对用户、锁单 ID、锁令牌及有效期，再置为 USED 并写 USE 动作。
+     * 在调用方已锁消费单的事务中再锁用户券，requireLock 核对状态、消费单 ID、令牌及用户，随后检查有效期。
      * <p>
-     * 在 simulate 已持有订单锁的同一事务中执行，核销、改订单付款状态与支付事件一起提交。
+     * 通过后将 LOCKED→USED、version 加一，并写 USE 动作；订单 PAID 和支付事件由外层 simulate 一起写入。
+     * SQL 不再次比较完整锁归属，是因为检查到更新之间仍持有券行锁。
+     * 核销不清除历史锁字段，也不会再次扣活动发行库存。
      *
      * @param order
-     *                  已锁定、待付款的消费订单
+     *                  已持行锁的待付消费单
      * @param now
-     *                  本次付款处理时刻，Unix 毫秒
+     *                  本次付款处理 Unix 毫秒
+     * @see #requireLock
+     * @see com.voucherx.commerce.mapper.UserCouponMapper#use
      */
     private void redeem(ConsumptionOrder order, long now) {
         long couponId = order.couponId();
@@ -255,18 +293,21 @@ public class CommerceService {
     }
 
     /**
-     * 主动取消用户拥有的待付订单；已取消时幂等返回，已付款等其他状态拒绝。
+     * 锁住当前用户拥有的订单，再决定是否允许取消，和付款共用同一订单行锁。
      * <p>
-     * 消费单同时释放自己的券锁；购买单未付款则不发券，也没有在这里回补秒杀库存或删除一人一单资格。
+     * 已经 CANCELLED 直接返回，不再读取或释放券；只有 PENDING_PAYMENT 才进入 closeLocked，PAID/历史状态等拒绝。
+     * 例如 5001 取消后券被 5002/L2 重新锁住，旧 5001 重复取消直接返回，不能误释放新锁。
+     * <p>
+     * 消费取消联合释放券与关闭消费单；购买取消尚未发行用户券，也不会在这里返还活动库存或清除领取资格。
      *
      * @param user
      *                 当前登录用户 ID
      * @param kind
-     *                 订单类型
+     *                 非空订单类型
      * @param id
      *                 对应类型的订单 ID
-     *
-     * @return 正常关闭后的 CANCELLED 状态
+     * @return 正常关闭或幂等重放的 CANCELLED
+     * @see #closeLocked
      */
     @Transactional
     public String cancel(long user, Kind kind, long id) {
@@ -281,12 +322,16 @@ public class CommerceService {
     }
 
     /**
-     * 定时任务逐单调用的事务入口；锁订单后重新检查待付状态及截止时间，避免扫描与付款并发时误关闭。
+     * 供到期任务逐笔调用的事务入口，先锁订单，再用当前业务时间复核仍待付且 now 已到付款截止。
+     * <p>
+     * 扫描只是候选，此处复核可避免把已经被付款提交的订单关掉；已不存在或不满足条件就返回。
+     * 这条内部任务路径不依赖 HTTP 用户上下文，和主动取消共用 closeLocked。
      *
      * @param kind
-     *                 扫描出的订单类型
+     *                 候选订单的非空类型
      * @param id
-     *                 候选超时订单 ID；不存在时忽略
+     *                 候选订单 ID
+     * @see CommerceExpiryJob#tick()
      */
     @Transactional
     public void expire(Kind kind, long id) {
@@ -299,17 +344,22 @@ public class CommerceService {
     }
 
     /**
-     * 在已持有订单锁的事务中关闭订单；消费单先锁券并核对归属，再清除券锁、增加版本并写 RELEASE。
+     * 调用者已持有待付订单锁时，联合完成取消或到期关闭。
      * <p>
-     * 释放后的券按当前时刻变为 AVAILABLE 或 EXPIRED；购买单只更新付款状态，不回补秒杀库存。
-     * 调用者须已确认订单仍为待付状态，不能把此方法用于已付款退款。
+     * 消费单再锁券并核对归属，按 now 与 validUntil 选择 AVAILABLE/EXPIRED，清空锁字段、增加版本并写 RELEASE，
+     * 再条件写消费单 CANCELLED；购买单只条件写 CANCELLED。
+     * <p>
+     * 假设付款先获得订单锁并提交 PAID，取消将看到终态而不进入此处；取消先提交时，新成功付款只记录终态冲突。
+     * 订单、券及动作在调用者同一事务中提交，方法本身不开新事务，也不实现退款或活动发行额度补偿。
      *
      * @param kind
      *                  订单类型
      * @param order
-     *                  已加锁且允许关闭的订单
+     *                  已加锁且调用者确认允许关闭的订单
      * @param now
-     *                  关闭时刻，Unix 毫秒
+     *                  本次关闭判断使用的 Unix 毫秒
+     * @see #requireLock
+     * @see CommerceRules#releasedState
      */
     private void closeLocked(Kind kind, CommerceOrder order, long now) {
         if (kind == Kind.CONSUMPTION) {
@@ -326,12 +376,18 @@ public class CommerceService {
     }
 
     /**
-     * 核对券是否处于 LOCKED，且用户、lockOrderId、lockToken 都属于当前消费单，防止旧订单误用或误释放新锁。
+     * 在仍持有订单和券行锁时核对券的 LOCKED 状态，以及用户、lockOrderId 和 lockToken 三项归属。
+     * <p>
+     * 例如消费单 5001/L1 只能核销或释放券上同一组 5001/L1；后续 5002/L2 的锁不能被旧路径误操作。
+     * 令牌是服务端每次消费下单生成的随机归属标识，不是登录 Token；version 另用于条件更新。
+     * 本方法只验证快照，不获取数据库锁，调用者须让检查到 SQL 更新之间保持事务行锁。
      *
      * @param order
-     *                   已锁定的消费订单
+     *                   当前已锁定的消费单
      * @param coupon
-     *                   已锁定的用户券快照
+     *                   当前已锁定的用户券快照
+     * @throws com.voucherx.common.exception.BusinessException
+     *                                                             任一锁归属不匹配
      */
     private void requireLock(ConsumptionOrder order, UserCoupon coupon) {
         if (!"LOCKED".equals(coupon.state()) || coupon.lockOrderId() == null
@@ -341,18 +397,18 @@ public class CommerceService {
     }
 
     /**
-     * 写入 LOCK、USE 或 RELEASE 券动作流水；事务由消费下单、付款或关闭调用者提供。
+     * 写 LOCK、USE 或 RELEASE 动作，携带用户券、消费单和本轮令牌；与对应交易一起提交，不在此处异步投递。
      *
      * @param coupon
      *                   用户券 ID
      * @param order
      *                   消费订单 ID
      * @param token
-     *                   本轮锁券令牌
+     *                   本轮券锁归属令牌
      * @param action
-     *                   券动作类型
+     *                   LOCK、USE 或 RELEASE
      * @param now
-     *                   动作时刻，Unix 毫秒
+     *                   动作 Unix 毫秒
      */
     private void action(long coupon, long order, String token, String action, long now) {
         actions.insert(coupon, order, token, action, now);
@@ -371,7 +427,6 @@ public class CommerceService {
      *                 当前用户 ID
      * @param lock
      *                 是否使用 FOR UPDATE
-     *
      * @return 属于当前用户的订单快照
      */
     public CommerceOrder order(Kind kind, long id, long user, boolean lock) {
@@ -390,7 +445,6 @@ public class CommerceService {
      *                 对应类型的订单 ID
      * @param lock
      *                 是否请求行锁；事务由调用者提供
-     *
      * @return 订单；不存在时为 {@code null}
      */
     private CommerceOrder readOrder(Kind kind, long id, boolean lock) {
@@ -405,7 +459,6 @@ public class CommerceService {
      *                 用户券 ID
      * @param lock
      *                 是否使用 FOR UPDATE；为 true 时调用方须已有事务
-     *
      * @return 用户券快照；不存在时抛业务错误
      */
     public UserCoupon coupon(long id, boolean lock) {
@@ -416,16 +469,17 @@ public class CommerceService {
     }
 
     /**
-     * 校验游标及页大小后，查询当前用户 ID 大于游标的券，按 ID 递增返回。
+     * 按用户 ID 过滤，再取用户券 id 大于 after 的一页并按券 id 递增返回。
+     * <p>
+     * 这是券 ID 游标，不能把 after 当成用户 ID 或页码；当前查询不按 AVAILABLE 等状态过滤，结果也可能包含已锁、已用或已过期券。
      *
      * @param user
-     *                  当前用户 ID
+     *                  当前登录用户 ID
      * @param after
-     *                  上一页最后一个券 ID；首页为 0
+     *                  上一页最后一张用户券 ID，首页为 0
      * @param size
-     *                  每页 1 到 100 条
-     *
-     * @return 券列表；没有更多记录时为空列表
+     *                  页大小，1 到 100
+     * @return 用户自己的券列表；没有更多时为空列表
      */
     public List<UserCoupon> coupons(long user, long after, int size) {
         if (after < 0 || size < 1 || size > 100)
@@ -442,7 +496,6 @@ public class CommerceService {
      *                  扫描时刻，Unix 毫秒
      * @param limit
      *                  本轮最多返回条数
-     *
      * @return 候选订单 ID，按付款截止时间排序
      */
     public List<Long> expiredOrderIds(Kind kind, long now, int limit) {

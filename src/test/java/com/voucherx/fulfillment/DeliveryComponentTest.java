@@ -77,13 +77,16 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 串联抢券、异步建购买单、付款发券、消费锁券、取消释放、重新锁券和付款核销。
+     * 04 的顺序真实组件链路：先通过 Outbox/MQ 建购买单，再付款发券、消费锁券、取消释放、重锁与付款核销。
      * <p>
-     * 本测试用户与活动均为 1：买券支付 100 分，所发券面额 1000 分，消费原价 2000 分，
-     * 实付 1000 分。与指南中的示例金额不同，调用顺序相同。
+     * 用户/活动均为 1，买券支付 100 分、券面额 1000 分、消费原额 2000 分、应付 1000 分，与指南金额不同但调用关系一致。
+     * 相同 pay-buy 事件重放仍返回原 APPLIED 且只发一张券；取消旧消费单后，新单用新令牌锁券，旧单迟到成功只能得
+     * CONFLICT_TERMINAL。
      * <p>
-     * 同时检查支付事件重放不重复发券、已取消旧消费单的迟到付款不能核销新锁、
-     * 重复成功付款不重复核销，以及已付款消费单不能按未付取消流程关闭。
+     * 新消费单付款 APPLIED，换新事件再成功得 ALREADY_PAID，最终券 USED 且只有一条 USE；已付单取消被拒绝。
+     * 这些动作按顺序构造，不是穷尽付款/取消所有线程交错；并发锁券与回滚另看 PersistenceContractTest。
+     *
+     * @see PersistenceContractTest
      */
     @Test
     void realPurchaseIssueCancelRelockAndRedeem() {

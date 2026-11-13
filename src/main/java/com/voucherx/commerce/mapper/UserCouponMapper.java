@@ -7,9 +7,13 @@ import com.voucherx.commerce.model.UserCoupon;
 import com.voucherx.commerce.model.PurchaseOrder;
 
 /**
- * 用户持有的券及其使用状态；锁归属由消费订单 ID 和随机令牌共同表达。
+ * 用户券的发行、锁定、核销和释放 SQL，映射 tb_user_coupon；事务和用户/锁归属由服务层负责。
  * <p>
- * SQL 位于同名 XML；Mapper 不自行开启业务事务。返回更新行数的方法仅描述写入结果，调用者负责所需的状态检查和行锁。
+ * tryLock 使用状态及 version 条件，use 只检查 LOCKED，release 只按 ID 写入。
+ * 因此必须连同 CommerceService 持有订单锁、券锁及 requireLock 的整段流程阅读，不能只看单条 SQL 推断并发保护。
+ *
+ * @see com.voucherx.commerce.CommerceService
+ * @see com.voucherx.commerce.model.UserCoupon
  */
 @Mapper
 public interface UserCouponMapper {
@@ -18,7 +22,6 @@ public interface UserCouponMapper {
      *
      * @param id
      *               用户券 ID
-     *
      * @return 用户券；不存在为 null
      */
     UserCoupon find(@Param("id") long id);
@@ -28,7 +31,6 @@ public interface UserCouponMapper {
      *
      * @param id
      *               用户券 ID
-     *
      * @return 用户券；不存在为 null
      */
     UserCoupon lock(@Param("id") long id);
@@ -42,73 +44,79 @@ public interface UserCouponMapper {
      *                  上一页最后的券 ID；首页 0
      * @param limit
      *                  本轮最多查询或更新条数
-     *
      * @return 最多 limit 张用户券
      */
     List<UserCoupon> page(@Param("user") long user, @Param("after") long after, @Param("limit") int limit);
 
     /**
-     * 仅当 AVAILABLE 且 version 匹配时更新为 LOCKED，绑定消费单及令牌并增加版本。
+     * 只在当前 AVAILABLE 且 version 等于读出值时写 LOCKED，绑定消费单及令牌，version 加一。
+     * <p>
+     * 本 SQL 不重新校验用户、商户、有效期或门槛，这些由消费服务先持锁验证。
+     * 受影响行数必须是 1 才能继续提交；后续 LOCK 动作与新消费单共用事务。
      *
      * @param id
      *                    用户券 ID
      * @param orderId
-     *                    锁券的消费订单 ID
+     *                    本次新消费单 ID
      * @param token
-     *                    本轮锁券随机令牌
+     *                    服务端为这次消费生成的随机锁令牌
      * @param version
-     *                    读取时的乐观锁版本
-     *
-     * @return 锁定成功为 1，竞争或状态不匹配为 0
+     *                    锁券行查询返回的当前版本
+     * @return 1 为锁定成功，0 为状态/版本不匹配或券不存在
      */
     int tryLock(@Param("id") long id, @Param("orderId") long orderId, @Param("token") String token,
             @Param("version") long version);
 
     /**
-     * 按购买订单快照插入 AVAILABLE 用户券；购买订单唯一约束防止重复发券。
+     * 按购买单快照插入一张用户券，初始 AVAILABLE、版本 0 及空锁字段由表默认值提供。
+     * <p>
+     * purchase_order_id 的 uk_coupon_source 唯一约束兜底重复来源；这条 SQL 不判断订单 PAID，
+     * 因为服务层在同一事务内先插券再改付款状态。必须与订单及支付事件一起提交。
      *
      * @param order
-     *                  包含权益快照的购买订单
+     *                  已持锁且付款可应用的购买单权益快照
      * @param now
-     *                  当前 Unix 毫秒；发券时为有效期起点
+     *                  券生效 Unix 毫秒
      * @param until
-     *                  用户券失效 Unix 毫秒
-     *
-     * @return 插入行数
+     *                  券失效 Unix 毫秒
+     * @return 插入行数；来源唯一约束冲突会抛异常
      */
     int issue(@Param("order") PurchaseOrder order, @Param("now") long now, @Param("until") long until);
 
     /**
-     * 仅将 LOCKED 券改为 USED 并增加版本；用户及锁归属已由持锁服务校验，SQL 不再次比较令牌。
+     * 仅将 LOCKED 券改为 USED 并增加版本，不清除 lock_order_id/lock_token 的历史归属。
+     * <p>
+     * SQL 不再次比较用户、订单或令牌；服务层已持订单和券锁执行 requireLock 和有效期检查，直到更新完成仍持锁。
+     * 调用本方法本身不修改消费单或写支付事件，必须使用上层核销事务。
      *
      * @param id
-     *               用户券 ID
-     *
-     * @return 更新行数
+     *               已核验本次锁归属的用户券 ID
+     * @return 更新行数；状态不为 LOCKED 或不存在时为 0
      */
     int use(@Param("id") long id);
 
     /**
-     * 清空锁单 ID 和令牌，写 AVAILABLE/EXPIRED 并增加版本；SQL 不比较旧状态和令牌，服务必须先持锁核对归属。
+     * 按券 ID 写入服务层算好的 AVAILABLE 或 EXPIRED，清空锁单 ID/令牌并增加版本。
+     * <p>
+     * SQL 没有旧状态、令牌或版本条件；必须由已持订单/券锁并通过 requireLock 的关闭流程调用。
+     * 释放的是消费使用锁，不返还秒杀发行库存，也不实现已付款退款。
      *
      * @param id
-     *                  用户券 ID
+     *                  已核验当前消费单归属的用户券 ID
      * @param state
-     *                  释放后状态 AVAILABLE 或 EXPIRED
-     *
+     *                  依失效时间计算出的 AVAILABLE 或 EXPIRED
      * @return 更新行数
      */
     int release(@Param("id") long id, @Param("state") String state);
 
     /**
-     * 有限更新已到失效时刻且仍 AVAILABLE 的券为 EXPIRED，不直接修改 LOCKED 券。
+     * 仅批量更新 valid_until_ms 已到且仍 AVAILABLE 的券为 EXPIRED，version 加一；不直接释放 LOCKED 券。
      *
      * @param now
-     *                  当前 Unix 毫秒；发券时为有效期起点
+     *                  本轮到期判断 Unix 毫秒
      * @param limit
-     *                  本轮最多查询或更新条数
-     *
-     * @return 本轮过期的券数
+     *                  本条 SQL 最多更新的券数
+     * @return 本轮实际标记过期的券数
      */
     int expireAvailable(@Param("now") long now, @Param("limit") int limit);
 }

@@ -19,9 +19,9 @@ public sealed interface CommerceOrder permits PurchaseOrder, ConsumptionOrder {
     long userId();
 
     /**
-     * 返回付款状态，与秒杀请求 SUCCESS 或基础建单 status 是不同维度。
+     * 读取付款状态，与请求 SUCCESS 和基础建单 status=1 分开；历史购买单可保留 LEGACY_CREATED，不能自动视为已付款。
      *
-     * @return PENDING_PAYMENT、PAID 或 CANCELLED
+     * @return PENDING_PAYMENT、PAID、CANCELLED，或历史购买单的 LEGACY_CREATED
      */
     String paymentStatus();
 

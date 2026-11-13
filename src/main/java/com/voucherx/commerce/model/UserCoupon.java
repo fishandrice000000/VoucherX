@@ -9,6 +9,9 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  * 正常使用为 AVAILABLE → LOCKED → USED；取消消费单则释放为 AVAILABLE 或 EXPIRED。
  * JSON 使用 snake_case，Java 使用 record 访问器，例如 faceValue() 对应 JSON 的 face_value。
  *
+ * <p>
+ * lockToken 标识某次消费锁的归属，不是数据库行锁或登录令牌。核销后锁字段可保留用于追溯，可否再使用要看 state 和有效期；释放时才清空锁字段。
+ *
  * @param id
  *                            用户券 ID，例如指南中的 4001
  * @param purchaseOrderId

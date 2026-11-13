@@ -3,6 +3,10 @@ package com.voucherx.commerce.model;
 /**
  * 支付事件及已判定的回执，映射支付事件表；重放同一事件返回这里保存的快照。
  *
+ * <p>
+ * success 是输入声明，outcome 才描述是否应用权益；orderState
+ * 是历史回执快照。服务仍先锁订单做归属和金额校验，命中旧事件后返回原结果，不按当前状态重算回执。
+ *
  * @param eventId
  *                        全局唯一支付事件幂等键
  * @param orderKind

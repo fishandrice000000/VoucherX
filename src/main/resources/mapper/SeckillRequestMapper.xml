@@ -71,4 +71,20 @@ UPDATE tb_seckill_request SET reason=#{reason},updated_at_ms=#{now} WHERE reques
 SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=#{voucherId} AND (phase IN ('INTENT','ACCEPTED') OR reservation IN ('RESERVED','UNKNOWN'))
         ]]>
     </select>
+
+    <select id="dueForCheck" resultType="string" useCache="false">
+        <![CDATA[
+SELECT request_id FROM tb_seckill_request WHERE next_check_at_ms<=#{now} AND updated_at_ms<=#{staleBefore} ORDER BY next_check_at_ms,request_id LIMIT #{limit}
+        ]]>
+    </select>
+    <update id="claimCheck">
+        <![CDATA[
+UPDATE tb_seckill_request SET next_check_at_ms=#{next} WHERE request_id=#{id} AND next_check_at_ms<=#{now}
+        ]]>
+    </update>
+    <update id="markReleased">
+        <![CDATA[
+UPDATE tb_seckill_request SET reservation='RELEASED',updated_at_ms=#{now} WHERE request_id=#{id}
+        ]]>
+    </update>
 </mapper>

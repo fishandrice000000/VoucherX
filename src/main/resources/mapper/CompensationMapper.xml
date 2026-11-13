@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.voucherx.reconcile.mapper.CompensationMapper">
+    <select id="countOrders" resultType="long" useCache="false">
+        <![CDATA[
+SELECT COUNT(*) FROM tb_voucher_order WHERE request_id=#{id}
+        ]]>
+    </select>
+    <insert id="insertIfAbsent">
+        <![CDATA[
+INSERT IGNORE INTO tb_compensation(request_id,compensation_id,next_at_ms,reason,updated_at_ms) VALUES (#{id},#{compensationId},#{now},#{reason},#{now})
+        ]]>
+    </insert>
+    <select id="lock" resultType="com.voucherx.reconcile.CompensationRecord" useCache="false">
+        <![CDATA[
+SELECT compensation_id,state,attempts,next_at_ms,reason FROM tb_compensation WHERE request_id=#{id} FOR UPDATE
+        ]]>
+    </select>
+    <update id="recordResult">
+        <![CDATA[
+UPDATE tb_compensation SET state=#{outcome},attempts=#{attempts},next_at_ms=#{next},updated_at_ms=#{now} WHERE request_id=#{id}
+        ]]>
+    </update>
+    <select id="due" resultType="string" useCache="false">
+        <![CDATA[
+SELECT request_id FROM tb_compensation WHERE state='PENDING' AND next_at_ms<=#{now} ORDER BY next_at_ms LIMIT #{limit}
+        ]]>
+    </select>
+</mapper>

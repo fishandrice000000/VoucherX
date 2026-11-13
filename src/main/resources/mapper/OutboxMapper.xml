@@ -41,4 +41,20 @@ UPDATE tb_outbox SET state=IF(attempts>=#{maxAttempts},'QUARANTINED','PENDING'),
 UPDATE tb_outbox SET state='QUARANTINED',last_result=#{reason},claim_token=NULL WHERE request_id=#{id}
         ]]>
     </update>
+
+    <select id="stateByRequest" resultType="string" useCache="false">
+        <![CDATA[
+SELECT state FROM tb_outbox WHERE request_id=#{id}
+        ]]>
+    </select>
+    <update id="scheduleReplay">
+        <![CDATA[
+UPDATE tb_outbox SET state=IF(attempts>=#{maxAttempts},'QUARANTINED','PENDING'),next_at_ms=#{now},claim_token=NULL WHERE request_id=#{id} AND state='SENT'
+        ]]>
+    </update>
+    <update id="completeRequest">
+        <![CDATA[
+UPDATE tb_outbox SET state='DONE',claim_token=NULL,last_result=#{result} WHERE request_id=#{id}
+        ]]>
+    </update>
 </mapper>

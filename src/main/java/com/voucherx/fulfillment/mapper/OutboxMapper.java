@@ -23,4 +23,10 @@ public interface OutboxMapper {
             @Param("reason") String reason);
 
     int quarantine(@Param("id") String id, @Param("reason") String reason);
+
+    String stateByRequest(@Param("id") String id);
+
+    int scheduleReplay(@Param("id") String id, @Param("maxAttempts") int maxAttempts, @Param("now") long now);
+
+    int completeRequest(@Param("id") String id, @Param("result") String result);
 }

@@ -28,4 +28,11 @@ public interface SeckillRequestMapper {
     int recordReason(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
 
     long countUnsettled(@Param("voucherId") long voucherId);
+
+    java.util.List<String> dueForCheck(@Param("now") long now, @Param("staleBefore") long staleBefore,
+            @Param("limit") int limit);
+
+    int claimCheck(@Param("id") String id, @Param("next") long next, @Param("now") long now);
+
+    int markReleased(@Param("id") String id, @Param("now") long now);
 }

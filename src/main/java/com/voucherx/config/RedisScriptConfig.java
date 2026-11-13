@@ -53,11 +53,21 @@ public class RedisScriptConfig {
         return script("lua/seckill_request_status.lua");
     }
 
+    /**
+     * 注册共享/活动双桶获取脚本；缺失固定策略初始化、按时间结算、双桶判断和条件扣减在一次 Redis 调用中完成。
+     *
+     * @return 期望 Long 结果的准入 Lua Bean
+     */
     @Bean
     public DefaultRedisScript<Long> admissionAcquireScript() {
         return script("lua/admission_acquire.lua");
     }
 
+    /**
+     * 注册共享策略更新脚本；按旧速率结算后更新速率、容量及截止，不在每次续期时赠送满桶。
+     *
+     * @return 期望 Long 结果的策略 Lua Bean
+     */
     @Bean
     public DefaultRedisScript<Long> admissionPolicyUpdateScript() {
         return script("lua/admission_policy_update.lua");

@@ -7,10 +7,17 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 秒杀准入编排：本地突发保护 -> Redis 共享/活动预算。
+ * 02 的请求侧编排：HTTP 入口先过本地突发保护，活动校验后再过 Redis 共享和活动预算。
+ * <p>
+ * 令牌表示当前允许进入多少新工作，会按时间补充；它不同于活动剩余库存。
+ * 新请求被拒绝时尚未写意图或预留库存，但先前已消耗的本地令牌不会因后续拒绝而返还。
+ * <p>
+ * OFF 直接绕过准入。FIXED/ADAPTIVE 均可使用两层保护，ADAPTIVE 只动态调整共享 Redis 策略。
+ * 已有可靠受理请求不会因入口降速被删除。
  *
- * 所有拒绝都发生在库存预扣之前。调用方必须先完成认证和活动时间校验，再调用
- * acquireGlobal；本地桶可按入口顺序放在更前，但拒绝时会保守消耗一个本地令牌。
+ * @see com.voucherx.seckill.controller.SeckillController#seckill
+ * @see com.voucherx.seckill.service.SeckillService#seckill(Long, Long, String)
+ * @see RedisAdmissionStore
  */
 @Service
 public class SeckillAdmissionService {
@@ -36,6 +43,16 @@ public class SeckillAdmissionService {
                 properties.global().activityCapacity());
     }
 
+    /**
+     * 在 Controller 进入业务服务前申请本实例的一个令牌；OFF 或本地 gate 禁用时直接通过。
+     * <p>
+     * 桶内不足则立即抛 SECKILL_BUSY，HTTP 包装为 429/42920，不阻塞等待补充。
+     * 同幂等键重试也先经过这里；本地令牌通过后若活动、全局预算或业务检查失败，不执行令牌退还。
+     *
+     * @throws com.voucherx.common.exception.BusinessException
+     *                                                             本实例突发预算不足
+     * @see LocalAdmissionGate#tryAcquire()
+     */
     public void acquireLocal() {
         if (properties.mode() == AdmissionMode.OFF) {
             return;
@@ -45,6 +62,19 @@ public class SeckillAdmissionService {
         }
     }
 
+    /**
+     * 活动存在且时间有效后，为本次新请求申请共享桶和活动桶各一个令牌。
+     * <p>
+     * OFF 或 global.enabled=false 时直接通过。两桶必须同时满足才扣减；预算不足映射 429，
+     * 策略缺失/失效/非法或 Redis 数据访问失败映射 503，不因依赖异常静默放行。
+     * 调用方应把此步骤放在新意图和库存预留前；同幂等键已命中旧请求时业务服务可在此前直接重放。
+     *
+     * @param voucherId
+     *                      已通过活动校验的活动 ID
+     * @throws com.voucherx.common.exception.BusinessException
+     *                                                             预算不足或准入策略/依赖不可用
+     * @see RedisAdmissionStore#tryAcquire
+     */
     public void acquireGlobal(Long voucherId) {
         if (properties.mode() == AdmissionMode.OFF || !properties.global().enabled()) {
             return;
@@ -67,6 +97,11 @@ public class SeckillAdmissionService {
         }
     }
 
+    /**
+     * 读取当前配置的准入模式，供观察或调用方判断，不触发令牌操作。
+     *
+     * @return OFF、FIXED 或 ADAPTIVE
+     */
     public AdmissionMode mode() {
         return properties.mode();
     }

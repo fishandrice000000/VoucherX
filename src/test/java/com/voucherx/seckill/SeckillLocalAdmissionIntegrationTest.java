@@ -16,7 +16,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 本地桶容量为 1 时，同一实例的第二个请求必须在库存预扣前被 429 拒绝。
+ * 本地入口保护的 HTTP 组件测试：FIXED、本地容量 1 且极慢补充，关闭全局桶以隔离本地分支。
+ * <p>
+ * 通过 MockMvc 与认证上下文调用，验证第二个请求的 429 及错误码，并确认它尚未占库存资格。
  */
 @TestPropertySource(properties = {
         "voucherx.admission.mode=FIXED",
@@ -32,6 +34,12 @@ class SeckillLocalAdmissionIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private SeckillStockService stockService;
 
+    /**
+     * 两个用户带各自 Token 抢同一活动，首个返回 202，第二个返回 429/42920；Redis 只有第一位用户的资格，库存只少 1。
+     *
+     * @throws Exception
+     *                       HTTP 测试执行异常
+     */
     @Test
     void localBurstRejectionReturns429BeforeReservation() throws Exception {
         createUser(1);
@@ -59,6 +67,13 @@ class SeckillLocalAdmissionIntegrationTest extends AbstractIntegrationTest {
                 RedisKeys.seckillUsers(VOUCHER_ID), "2")).isFalse();
     }
 
+    /**
+     * 直接往隔离 Redis 写随机 Token 到用户 ID 的映射，跳过验证码登录以聚焦本地准入；不是生产登录入口。
+     *
+     * @param userId
+     *                   已准备的用例用户 ID
+     * @return 用于 MockMvc Authorization 头的 Token
+     */
     private String issueToken(long userId) {
         String token = UUID.randomUUID().toString().replace("-", "");
         redisTemplate.opsForValue().set(RedisKeys.token(token), String.valueOf(userId));

@@ -96,21 +96,43 @@ public final class RedisKeys {
     }
 
     /**
-     * 方向 02 准入 Key 使用同一 hash tag，为未来 Redis Cluster 同槽操作保留空间；
-     * 当前只支持并验证单节点 Redis。
+     * Redis 双桶获取脚本的 KEYS[1]，以及策略更新脚本的 KEYS[1]：保存共享余额 tokens 与结算 Unix 毫秒 ts。
+     * <p>
+     * 02 四个准入键使用同一个 admission hash tag；当前项目仍只支持并验证单节点 Redis，不能据此推断库存已完成集群分片。
+     *
+     * @return voucherx:{admission}:shared:tokens
      */
     public static String admissionSharedTokens() {
         return "voucherx:{admission}:shared:tokens";
     }
 
+    /**
+     * 获取脚本 KEYS[2] 及策略更新脚本 KEYS[2]：保存共享 rate、capacity、validUntil 和更新时间。
+     *
+     * @return voucherx:{admission}:shared:policy
+     */
     public static String admissionSharedPolicy() {
         return "voucherx:{admission}:shared:policy";
     }
 
+    /**
+     * 获取脚本 KEYS[3]：保存单活动的 tokens 和 ts，与共享桶在同一次 Lua 中结算和消费。
+     *
+     * @param voucherId
+     *                      当前活动 ID
+     * @return 该活动的准入令牌 Hash 键
+     */
     public static String admissionActivityTokens(Long voucherId) {
         return "voucherx:{admission}:activity:" + voucherId + ":tokens";
     }
 
+    /**
+     * 获取脚本 KEYS[4]：保存单活动的固定 rate/capacity 与有效截止，不由共享 AIMD 控制器逐活动调度。
+     *
+     * @param voucherId
+     *                      当前活动 ID
+     * @return 该活动的准入策略 Hash 键
+     */
     public static String admissionActivityPolicy(Long voucherId) {
         return "voucherx:{admission}:activity:" + voucherId + ":policy";
     }

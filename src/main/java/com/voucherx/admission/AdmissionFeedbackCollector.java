@@ -13,10 +13,16 @@ import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
 
 /**
- * 控制器采样：完成 TPS 来自消费者事务返回点；队列只看主队列 ready；Hikari 使用
- * 运行时 MXBean，避免周期查询系统表给数据库增加负担。
+ * 把消费者本实例的完成计数与外部负载读数组装成反馈，不以 HTTP 202 数量当订单完成 TPS。
+ * <p>
+ * RabbitAdmin 读取主队列 ready，Hikari MXBean 读取连接活跃数及等待线程数，不查询 MySQL 系统表。
+ * 没有可靠采集最老消息年龄；ready 也不覆盖全部 unacked、Outbox 待发、重试或死信积压。
+ * <p>
+ * 缺失观测用 measured=false 表达；数值占位 0 不能解释为真实负载 0。
  *
- * 当前 RabbitMQ classic queue 不提供可靠的最老消息年龄，因此不伪造该指标。
+ * @see CompletionMetrics#snapshotAndReset()
+ * @see FeedbackSample
+ * @see AdaptiveAdmissionController#tick()
  */
 @Component
 public class AdmissionFeedbackCollector {
@@ -28,6 +34,18 @@ public class AdmissionFeedbackCollector {
     private final HikariPoolMXBean hikariBean;
     private long lastSampleNanos;
 
+    /**
+     * 保存指标和 RabbitAdmin 提供者；若数据源是 Hikari，则在构造时尝试保存其池 MXBean，并记录采样起点。
+     * <p>
+     * 之后不会逐轮重新获取 MXBean，未取得时使用 hikariMeasured=false。
+     *
+     * @param completionMetrics
+     *                                本实例消费者累计的窗口计数
+     * @param rabbitAdminProvider
+     *                                可选 RabbitAdmin，用于主队列信息
+     * @param dataSource
+     *                                应用数据源，仅获取运行时池状态，不执行 SQL
+     */
     public AdmissionFeedbackCollector(CompletionMetrics completionMetrics,
             ObjectProvider<RabbitAdmin> rabbitAdminProvider,
             DataSource dataSource) {
@@ -39,6 +57,16 @@ public class AdmissionFeedbackCollector {
         this.lastSampleNanos = System.nanoTime();
     }
 
+    /**
+     * 以单调时钟测出上次采样以来的窗口长度（至少 1 毫秒），取出并重置消费者计数。
+     * <p>
+     * 再尽力读取主队列 ready 和 Hikari 活跃/等待数，分别记录观测是否成功；队列或池查询异常记调试日志。
+     * 这些读数来自不同瞬间，不是数据库事务或跨系统一致快照；计数已被取走，不应多个采集器重复消费同一窗口。
+     * 本方法自身不判断是否健康，也不修改入口令牌。
+     *
+     * @return 包含完成量、执行计数、负载及观测标志的窗口样本
+     * @see AdaptiveRateController#evaluate
+     */
     public FeedbackSample collect() {
         long now = System.nanoTime();
         long windowMillis = Math.max(1, (now - lastSampleNanos) / 1_000_000);

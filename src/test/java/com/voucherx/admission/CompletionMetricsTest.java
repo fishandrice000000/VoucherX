@@ -4,8 +4,14 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * 消费者窗口统计的单元测试，验证新建、业务拒绝与基础设施异常分开累计，以及取走窗口后的重置。
+ */
 class CompletionMetricsTest {
 
+    /**
+     * 分别记录一次新建、业务失败和暂时性失败，再取窗口核对各字段；第二次快照应没有重复消费已取走的计数。
+     */
     @Test
     void separatesCreatedOrdersFromBusinessAndInfrastructureFailures() {
         CompletionMetrics metrics = new CompletionMetrics();

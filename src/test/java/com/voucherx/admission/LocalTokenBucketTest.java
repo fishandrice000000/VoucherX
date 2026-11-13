@@ -12,8 +12,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * 本地令牌桶的纯单元测试：注入受控纳秒时钟，分别验证按时补充、回退处理和同步竞争，不启动 Redis。
+ */
 class LocalTokenBucketTest {
 
+    /**
+     * 容量 2、速率 1/秒：同一刻通过两次后拒绝，推进受控时钟 1 秒后只再通过一次。
+     */
     @Test
     void refillsByElapsedTimeAndNeverExceedsCapacity() {
         AtomicLong clock = new AtomicLong();
@@ -28,6 +34,9 @@ class LocalTokenBucketTest {
         assertThat(bucket.tryAcquire()).isFalse();
     }
 
+    /**
+     * 消耗唯一令牌后把时钟退回 5 秒，验证负经过时间不会凭空补充令牌。
+     */
     @Test
     void clockRollbackDoesNotAddTokens() {
         AtomicLong clock = new AtomicLong(10_000_000_000L);
@@ -38,6 +47,12 @@ class LocalTokenBucketTest {
         assertThat(bucket.tryAcquire()).isFalse();
     }
 
+    /**
+     * 固定时钟不前进，16 个线程各申请 20 次，验证 synchronized 保护下总通过数恰为初始容量 25。
+     *
+     * @throws Exception
+     *                       线程终止等待被中断等测试异常
+     */
     @Test
     void concurrentAcquireNeverExceedsCapacityWithoutElapsedTime() throws Exception {
         LocalTokenBucket bucket = new LocalTokenBucket(1.0, 25.0, () -> 0L);
@@ -70,6 +85,9 @@ class LocalTokenBucketTest {
         assertThat(allowed.get()).isEqualTo(25);
     }
 
+    /**
+     * 验证负速率、零容量及 NaN 速率在构造时被拒绝，避免产生不可解释的令牌运算。
+     */
     @Test
     void rejectsInvalidConfiguration() {
         assertThatThrownBy(() -> new LocalTokenBucket(-1, 1))

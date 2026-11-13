@@ -18,8 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 固定全局限流：同一活动共享令牌耗尽后，第二个请求必须在预扣前被拒绝。
- * 本测试类关闭本地桶，单独验证 Redis 双层令牌桶。
+ * FIXED 全局准入与抢券编排的组件测试：关闭本地桶，只验证 Redis 双层预算在预留前阻止请求。
+ * <p>
+ * 直接调用 SeckillService，所以断言的是业务分类和 Redis 库存/身份副作用，不通过 HTTP 包装层。
  */
 @TestPropertySource(properties = {
         "voucherx.admission.mode=FIXED",
@@ -39,6 +40,9 @@ class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private SeckillStockService stockService;
 
+    /**
+     * 共享和活动容量均为 1，首个用户预留后第二个用户被全局拒绝；Redis 只扣一份库存，资格和请求 Hash 只属于首个用户。
+     */
     @Test
     void globalRejectionHasNoStockOrRequestSideEffects() {
         createUser(1);
@@ -63,6 +67,9 @@ class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
         assertThat(requestKeys).containsExactly(RedisKeys.seckillRequest(accepted.requestId()));
     }
 
+    /**
+     * 第一活动耗尽共享预算后，换另一个活动仍被拒绝；第二活动库存保持 10、第二用户没有领取资格。
+     */
     @Test
     void sharedBudgetIsNotBypassedBySwitchingActivity() {
         createUser(1);

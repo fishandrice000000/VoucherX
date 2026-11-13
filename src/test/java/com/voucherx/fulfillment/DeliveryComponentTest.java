@@ -151,10 +151,13 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 受理请求后冻结活动并删除其 Redis 证据，受控恢复仍需保留该请求占用，Redis 可用为 9。
+     * 验证受理事实已落 MySQL 后，即使 Redis 库存、资格、归属和请求 Hash 丢失，恢复仍保留在途占用。
      * <p>
-     * 旧代次消息不能建单，也不能把当前请求改为失败；手动投递恢复后的原请求，最终正常建单且 MySQL 库存 9。
-     * 这是 06 的恢复分支，与普通租约重试是不同机制。
+     * 示例为总额 10、已建单 C=0、已受理 R=1，所以恢复后 A=9；gate 未被删除。
+     * 冻结提升 epoch，旧消息建单被拒绝且不能把已重绑的新代次请求改成失败。
+     * 再由恢复为 PENDING 的原 Outbox 重新投递，最终请求 SUCCEEDED，MySQL 库存为 9。
+     * <p>
+     * 这是隔离容器中的实际 MySQL/Redis/RabbitMQ 链路验证；该用例没有模拟进程崩溃。
      */
     @Test
     void rebuildPreservesAcceptedRequestAndRejectsOldEpoch() {
@@ -183,7 +186,11 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 在恢复发布 Redis 状态后注入中断，活动停在 RECONCILING；再次恢复回到 NORMAL，库存仍为 10，验证恢复重入不重复加量。
+     * 验证 Redis 发布成功、数据库重建阶段尚未提交时抛异常，重入不会重复增加库存。
+     * <p>
+     * 总额 10、R=C=0；RECOVERY_PUBLISHED 注入 FAIL 后，Redis 已被覆盖，数据库阶段回滚为 RECONCILING。
+     * 再次 recover 从重建继续，最终 NORMAL 且库存仍为 10，同时覆盖零成员的发布分支。
+     * 这里是受控异常中断，不是 SIGKILL、网络分区或恢复时长测试。
      */
     @Test
     void interruptedPublicationResumesWithoutAddingStockAgain() {

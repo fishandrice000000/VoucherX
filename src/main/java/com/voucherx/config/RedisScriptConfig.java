@@ -73,6 +73,19 @@ public class RedisScriptConfig {
         return script("lua/admission_policy_update.lua");
     }
 
+    /**
+     * 注册 06 的冻结重建发布脚本，对照 RecoveryService.rebuild 阅读 KEYS/ARGV。
+     * <p>
+     * 七个 KEYS 依次是正式库存、用户资格、归属、gate，以及三组对应暂存键；
+     * 四个 ARGV 是 epoch、recoveryId、可用额度 A、成员数量 R+C。
+     * Lua 检查冻结代次、暂存库存及成员数量后，一次替换库存/资格/归属，并写入发布标记，仍保持冻结。
+     * <p>
+     * 返回 1 表示发布成功，-1 是门禁不符，-2 是暂存库存不符，-3 是成员数量不符。
+     * 原子范围不包含逐条请求 Hash 或 MySQL 提交；注册 Bean 本身也不会执行脚本。
+     *
+     * @return 期望 Long 结果的恢复发布 Lua Bean
+     * @see com.voucherx.recovery.RecoveryService
+     */
     @Bean
     public DefaultRedisScript<Long> recoveryPublishScript() {
         return script("lua/recovery_publish.lua");

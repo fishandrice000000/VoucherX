@@ -289,6 +289,7 @@ bench/            # 压测客户端、数据准备、快照、采样与结果汇
 
 - 文档变更需同步维护所在目录的 README，新增文档子目录需补充父目录入口。
 - Java 代码格式遵循 [AGENTS.md](AGENTS.md#java-代码格式规范)：命令行与编辑器共用项目 Formatter 配置，所有新增或修改的 Java 文件提交前必须统一格式化。
+- 共享配置为 [java-formatter.xml](java-formatter.xml)，命令行入口见 [scripts](scripts/README.md)。VS Code 设置 `java.format.settings.url` 为 `java-formatter.xml`、`java.format.settings.profile` 为 `VoucherX`；本地 `.vscode/` 继续忽略。
 - 每个独立、可验证的工作单元完成后创建本地提交，使用 Conventional Commits，英文 Type / Scope 配合中文描述。
 - 只提交当前任务相关修改，保护已有工作；不得擅自推送或重写历史。
 - 功能状态以实际代码与验证结果为准，区分已验证、未验证与尚未实现。

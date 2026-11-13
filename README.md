@@ -16,6 +16,8 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 
 **技术深化 06** 已交付活动冻结、数据库恢复代次屏障、保留在途受理的库存/资格重建、复流校验与默认关闭的故障注入入口。当前以交付为目标，通过编译、单测及初步组件检查，不代表完整可靠性或性能验收。见 [06 实现与运行](docs/06/implementation-06.md)。
 
+生产数据访问已统一为 MyBatis / MyBatis-Plus：受理、Outbox、付款核销、对账补偿与恢复的 SQL 下沉到 Mapper，购买订单、消费订单、用户券等使用类型化结果。事务及锁协议保留；共享格式规则与命令行工具已接入。本轮 36 个单元测试、52 个真实组件集成测试通过，未执行正式性能压测。详见本地 [重构说明](docs/mybatis-refactor/README.md)。
+
 ## 技术栈
 
 - Java 21、Spring Boot 3.3.5、Maven。
@@ -215,6 +217,7 @@ src/main/java/com/voucherx/
 src/main/resources/
 ├── application.yml
 ├── db/          # MySQL 表结构、演示数据、增量迁移
+├── mapper/      # MyBatis XML、条件更新与查询映射
 └── lua/         # 秒杀预扣/释放/状态、验证码、缓存锁脚本
 
 src/test/java/com/voucherx/
@@ -287,6 +290,7 @@ bench/            # 压测客户端、数据准备、快照、采样与结果汇
 
 开发前阅读 [AGENTS.md](AGENTS.md) 与本地 Git 提交规范。
 
+- 生产 MySQL 访问统一使用 Mapper，业务层保留事务边界，数据访问规范见 [AGENTS.md](AGENTS.md#数据访问规范)。
 - 文档变更需同步维护所在目录的 README，新增文档子目录需补充父目录入口。
 - Java 代码格式遵循 [AGENTS.md](AGENTS.md#java-代码格式规范)：命令行与编辑器共用项目 Formatter 配置，所有新增或修改的 Java 文件提交前必须统一格式化。
 - 共享配置为 [java-formatter.xml](java-formatter.xml)，命令行入口见 [scripts](scripts/README.md)。VS Code 设置 `java.format.settings.url` 为 `java-formatter.xml`、`java.format.settings.profile` 为 `VoucherX`；本地 `.vscode/` 继续忽略。

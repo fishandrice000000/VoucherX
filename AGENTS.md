@@ -17,6 +17,13 @@
 - 所有新增或修改的 Java 文件，提交前必须使用 Formatter 统一格式化，并检查格式化后的差异。
 - 代码应保持清晰的缩进、空格和换行，字段、构造器、方法和分支正常展开；不得以沿用旧代码风格为由继续将多条语句挤在同一行。
 
+## 数据访问规范
+
+- 生产代码访问 MySQL 时统一使用 MyBatis / MyBatis-Plus Mapper；Service、定时任务、初始化器和维护入口不得直接使用 JdbcTemplate、Connection、PreparedStatement 或 ResultSet 执行业务 SQL。
+- SQL 放在 Mapper 注解或 XML 中；复杂 SQL 使用明确的参数绑定和有业务含义的 Mapper 方法。数据库查询结果使用明确的实体、record 或查询模型，避免使用 Map<String, Object> 表示数据库记录。
+- 业务事务边界保留在服务层；修改持久化实现时必须保留行锁及加锁顺序、条件更新、受影响行数判断、幂等与恢复代次检查。
+- 测试中的数据准备和独立数据库断言可继续使用 JdbcTemplate；数据源和连接池监控不受上述业务数据访问限制。
+
 ## Git 提交规范
 
 本项目所有代码修改必须遵循

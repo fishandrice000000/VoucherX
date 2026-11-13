@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.voucherx.commerce.mapper.PurchaseOrderMapper">
+    <select id="terms" resultType="com.voucherx.commerce.model.VoucherTerms" useCache="false">
+        <![CDATA[
+SELECT pay_value,actual_value,shop_id,min_spend,validity_seconds FROM tb_voucher WHERE id=#{id}
+        ]]>
+    </select>
+    <update id="initialize">
+        <![CDATA[
+UPDATE tb_voucher_order SET payment_status='PENDING_PAYMENT',pay_amount=#{terms.payValue},coupon_face_value=#{terms.actualValue},coupon_shop_id=#{terms.shopId},coupon_min_spend=#{terms.minSpend},coupon_validity_seconds=#{terms.validitySeconds},payment_deadline_ms=#{deadline} WHERE id=#{id}
+        ]]>
+    </update>
+    <select id="find" resultType="com.voucherx.commerce.model.PurchaseOrder" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_voucher_order WHERE id=#{id}
+        ]]>
+    </select>
+    <select id="lock" resultType="com.voucherx.commerce.model.PurchaseOrder" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_voucher_order WHERE id=#{id} FOR UPDATE
+        ]]>
+    </select>
+    <update id="markPaid">
+        <![CDATA[
+UPDATE tb_voucher_order SET payment_status='PAID' WHERE id=#{id} AND payment_status='PENDING_PAYMENT'
+        ]]>
+    </update>
+    <update id="cancel">
+        <![CDATA[
+UPDATE tb_voucher_order SET payment_status='CANCELLED' WHERE id=#{id} AND payment_status='PENDING_PAYMENT'
+        ]]>
+    </update>
+    <select id="expiredIds" resultType="long" useCache="false">
+        <![CDATA[
+SELECT id FROM tb_voucher_order WHERE payment_status='PENDING_PAYMENT' AND payment_deadline_ms<=#{now} ORDER BY payment_deadline_ms LIMIT #{limit}
+        ]]>
+    </select>
+</mapper>

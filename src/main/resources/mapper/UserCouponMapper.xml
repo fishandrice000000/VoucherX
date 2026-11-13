@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.voucherx.commerce.mapper.UserCouponMapper">
+    <select id="find" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_user_coupon WHERE id=#{id}
+        ]]>
+    </select>
+    <select id="lock" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_user_coupon WHERE id=#{id} FOR UPDATE
+        ]]>
+    </select>
+    <select id="page" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_user_coupon WHERE user_id=#{user} AND id>#{after} ORDER BY id LIMIT #{limit}
+        ]]>
+    </select>
+    <update id="tryLock">
+        <![CDATA[
+UPDATE tb_user_coupon SET state='LOCKED',lock_order_id=#{orderId},lock_token=#{token},version=version+1 WHERE id=#{id} AND state='AVAILABLE' AND version=#{version}
+        ]]>
+    </update>
+    <insert id="issue">
+        <![CDATA[
+INSERT INTO tb_user_coupon(purchase_order_id,user_id,voucher_id,shop_id,face_value,min_spend,valid_from_ms,valid_until_ms) VALUES (#{order.id},#{order.userId},#{order.voucherId},#{order.couponShopId},#{order.couponFaceValue},#{order.couponMinSpend},#{now},#{until})
+        ]]>
+    </insert>
+    <update id="use">
+        <![CDATA[
+UPDATE tb_user_coupon SET state='USED',version=version+1 WHERE id=#{id} AND state='LOCKED'
+        ]]>
+    </update>
+    <update id="release">
+        <![CDATA[
+UPDATE tb_user_coupon SET state=#{state},lock_order_id=NULL,lock_token=NULL,version=version+1 WHERE id=#{id}
+        ]]>
+    </update>
+    <update id="expireAvailable">
+        <![CDATA[
+UPDATE tb_user_coupon SET state='EXPIRED',version=version+1 WHERE state='AVAILABLE' AND valid_until_ms<=#{now} LIMIT #{limit}
+        ]]>
+    </update>
+</mapper>

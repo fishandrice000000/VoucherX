@@ -3,7 +3,8 @@
 <mapper namespace="com.voucherx.reconcile.mapper.RepairAuditMapper">
     <insert id="insert">
         <![CDATA[
-INSERT INTO tb_repair_audit(request_id,voucher_id,action,evidence,outcome,created_at_ms) VALUES (#{request},#{voucher},#{action},#{evidence},#{outcome},#{now})
+        INSERT INTO tb_repair_audit(request_id, voucher_id, action, evidence, outcome, created_at_ms)
+        VALUES (#{request}, #{voucher}, #{action}, #{evidence}, #{outcome}, #{now})
         ]]>
     </insert>
 </mapper>

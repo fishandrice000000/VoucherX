@@ -3,7 +3,8 @@
 <mapper namespace="com.voucherx.commerce.mapper.CouponActionMapper">
     <insert id="insert">
         <![CDATA[
-INSERT INTO tb_coupon_action(coupon_id,order_id,lock_token,action,created_at_ms) VALUES (#{coupon},#{order},#{token},#{action},#{now})
+        INSERT INTO tb_coupon_action(coupon_id, order_id, lock_token, action, created_at_ms)
+        VALUES (#{coupon}, #{order}, #{token}, #{action}, #{now})
         ]]>
     </insert>
 </mapper>

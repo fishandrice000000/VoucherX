@@ -21,70 +21,112 @@
     </resultMap>
     <select id="find" resultMap="request" useCache="false">
         <![CDATA[
-SELECT * FROM tb_seckill_request WHERE request_id=#{id}
+        SELECT *
+        FROM tb_seckill_request
+        WHERE request_id=#{id}
         ]]>
     </select>
     <select id="byKey" resultMap="request" useCache="false">
         <![CDATA[
-SELECT * FROM tb_seckill_request WHERE user_id=#{userId} AND client_key=#{key}
+        SELECT *
+        FROM tb_seckill_request
+        WHERE user_id=#{userId}
+        AND client_key=#{key}
         ]]>
     </select>
     <select id="lock" resultMap="request" useCache="false">
         <![CDATA[
-SELECT * FROM tb_seckill_request WHERE request_id=#{id} FOR UPDATE
+        SELECT *
+        FROM tb_seckill_request
+        WHERE request_id=#{id} FOR UPDATE
         ]]>
     </select>
     <insert id="insertIntent">
         <![CDATA[
-INSERT INTO tb_seckill_request(request_id,event_id,user_id,voucher_id,client_key,
- epoch,stock_mode,start_bucket_no,layout_version,created_at_ms,updated_at_ms)
-VALUES (#{id},#{eventId},#{user},#{voucher},#{key},#{epoch},#{mode},#{bucket},#{layout},#{now},#{now})
+        INSERT INTO tb_seckill_request(request_id,
+            event_id,
+            user_id,
+            voucher_id,
+            client_key,
+            epoch,
+            stock_mode,
+            start_bucket_no,
+            layout_version,
+            created_at_ms,
+            updated_at_ms)
+        VALUES (#{id}, #{eventId}, #{user}, #{voucher}, #{key}, #{epoch}, #{mode}, #{bucket}, #{layout}, #{now}, #{now})
         ]]>
     </insert>
     <update id="accept">
         <![CDATA[
-UPDATE tb_seckill_request SET phase='ACCEPTED',reservation='RESERVED',updated_at_ms=#{now} WHERE request_id=#{id}
+        UPDATE tb_seckill_request
+        SET phase='ACCEPTED', reservation='RESERVED', updated_at_ms=#{now}
+        WHERE request_id=#{id}
         ]]>
     </update>
     <update id="succeed">
         <![CDATA[
-UPDATE tb_seckill_request SET phase='SUCCEEDED',order_id=#{orderId},updated_at_ms=#{now} WHERE request_id=#{id} AND phase='ACCEPTED'
+        UPDATE tb_seckill_request
+        SET phase='SUCCEEDED', order_id=#{orderId}, updated_at_ms=#{now}
+        WHERE request_id=#{id}
+        AND phase='ACCEPTED'
         ]]>
     </update>
     <update id="rejectUnreserved">
         <![CDATA[
-UPDATE tb_seckill_request SET phase='CLOSED',reservation='NONE',reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id}
+        UPDATE tb_seckill_request
+        SET phase='CLOSED', reservation='NONE', reason=#{reason}, updated_at_ms=#{now}
+        WHERE request_id=#{id}
         ]]>
     </update>
     <update id="close">
         <![CDATA[
-UPDATE tb_seckill_request SET phase='CLOSED',reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id}
+        UPDATE tb_seckill_request
+        SET phase='CLOSED', reason=#{reason}, updated_at_ms=#{now}
+        WHERE request_id=#{id}
         ]]>
     </update>
     <update id="recordReason">
         <![CDATA[
-UPDATE tb_seckill_request SET reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id} AND phase='ACCEPTED'
+        UPDATE tb_seckill_request
+        SET reason=#{reason}, updated_at_ms=#{now}
+        WHERE request_id=#{id}
+        AND phase='ACCEPTED'
         ]]>
     </update>
     <select id="countUnsettled" resultType="long" useCache="false">
         <![CDATA[
-SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=#{voucherId} AND (phase IN ('INTENT','ACCEPTED') OR reservation IN ('RESERVED','UNKNOWN'))
+        SELECT COUNT(*)
+        FROM tb_seckill_request
+        WHERE voucher_id=#{voucherId}
+        AND (phase IN ('INTENT', 'ACCEPTED')
+        OR reservation IN ('RESERVED', 'UNKNOWN'))
         ]]>
     </select>
 
     <select id="dueForCheck" resultType="string" useCache="false">
         <![CDATA[
-SELECT request_id FROM tb_seckill_request WHERE next_check_at_ms<=#{now} AND updated_at_ms<=#{staleBefore} ORDER BY next_check_at_ms,request_id LIMIT #{limit}
+        SELECT request_id
+        FROM tb_seckill_request
+        WHERE next_check_at_ms<=#{now}
+        AND updated_at_ms<=#{staleBefore}
+        ORDER BY next_check_at_ms, request_id
+        LIMIT #{limit}
         ]]>
     </select>
     <update id="claimCheck">
         <![CDATA[
-UPDATE tb_seckill_request SET next_check_at_ms=#{next} WHERE request_id=#{id} AND next_check_at_ms<=#{now}
+        UPDATE tb_seckill_request
+        SET next_check_at_ms=#{next}
+        WHERE request_id=#{id}
+        AND next_check_at_ms<=#{now}
         ]]>
     </update>
     <update id="markReleased">
         <![CDATA[
-UPDATE tb_seckill_request SET reservation='RELEASED',updated_at_ms=#{now} WHERE request_id=#{id}
+        UPDATE tb_seckill_request
+        SET reservation='RELEASED', updated_at_ms=#{now}
+        WHERE request_id=#{id}
         ]]>
     </update>
 </mapper>

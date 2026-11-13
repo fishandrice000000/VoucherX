@@ -3,32 +3,64 @@
 <mapper namespace="com.voucherx.commerce.mapper.ConsumptionOrderMapper">
     <insert id="insert" useGeneratedKeys="true" keyProperty="key.id" keyColumn="id">
         <![CDATA[
-INSERT INTO tb_consumption_order(user_id,shop_id,coupon_id,lock_token,original_amount,discount_amount,pay_amount,payment_deadline_ms,created_at_ms) VALUES (#{order.userId},#{order.shopId},#{order.couponId},#{order.lockToken},#{order.originalAmount},#{order.discountAmount},#{order.payAmount},#{order.paymentDeadlineMs},#{order.createdAtMs})
+        INSERT INTO tb_consumption_order(user_id,
+            shop_id,
+            coupon_id,
+            lock_token,
+            original_amount,
+            discount_amount,
+            pay_amount,
+            payment_deadline_ms,
+            created_at_ms)
+        VALUES (#{order.userId},
+            #{order.shopId},
+            #{order.couponId},
+            #{order.lockToken},
+            #{order.originalAmount},
+            #{order.discountAmount},
+            #{order.payAmount},
+            #{order.paymentDeadlineMs},
+            #{order.createdAtMs})
         ]]>
     </insert>
     <select id="find" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
         <![CDATA[
-SELECT * FROM tb_consumption_order WHERE id=#{id}
+        SELECT *
+        FROM tb_consumption_order
+        WHERE id=#{id}
         ]]>
     </select>
     <select id="lock" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
         <![CDATA[
-SELECT * FROM tb_consumption_order WHERE id=#{id} FOR UPDATE
+        SELECT *
+        FROM tb_consumption_order
+        WHERE id=#{id} FOR UPDATE
         ]]>
     </select>
     <update id="markPaid">
         <![CDATA[
-UPDATE tb_consumption_order SET payment_status='PAID' WHERE id=#{id} AND payment_status='PENDING_PAYMENT'
+        UPDATE tb_consumption_order
+        SET payment_status='PAID'
+        WHERE id=#{id}
+        AND payment_status='PENDING_PAYMENT'
         ]]>
     </update>
     <update id="cancel">
         <![CDATA[
-UPDATE tb_consumption_order SET payment_status='CANCELLED' WHERE id=#{id} AND payment_status='PENDING_PAYMENT'
+        UPDATE tb_consumption_order
+        SET payment_status='CANCELLED'
+        WHERE id=#{id}
+        AND payment_status='PENDING_PAYMENT'
         ]]>
     </update>
     <select id="expiredIds" resultType="long" useCache="false">
         <![CDATA[
-SELECT id FROM tb_consumption_order WHERE payment_status='PENDING_PAYMENT' AND payment_deadline_ms<=#{now} ORDER BY payment_deadline_ms LIMIT #{limit}
+        SELECT id
+        FROM tb_consumption_order
+        WHERE payment_status='PENDING_PAYMENT'
+        AND payment_deadline_ms<=#{now}
+        ORDER BY payment_deadline_ms
+        LIMIT #{limit}
         ]]>
     </select>
 </mapper>

@@ -3,12 +3,31 @@
 <mapper namespace="com.voucherx.commerce.mapper.PaymentEventMapper">
     <select id="find" resultType="com.voucherx.commerce.model.PaymentEvent" useCache="false">
         <![CDATA[
-SELECT * FROM tb_payment_event WHERE event_id=#{id}
+        SELECT *
+        FROM tb_payment_event
+        WHERE event_id=#{id}
         ]]>
     </select>
     <insert id="insert">
         <![CDATA[
-INSERT INTO tb_payment_event(event_id,order_kind,order_id,user_id,amount,success,outcome,order_state,created_at_ms) VALUES (#{event.eventId},#{event.orderKind},#{event.orderId},#{event.userId},#{event.amount},#{event.success},#{event.outcome},#{event.orderState},#{event.createdAtMs})
+        INSERT INTO tb_payment_event(event_id,
+            order_kind,
+            order_id,
+            user_id,
+            amount,
+            success,
+            outcome,
+            order_state,
+            created_at_ms)
+        VALUES (#{event.eventId},
+            #{event.orderKind},
+            #{event.orderId},
+            #{event.userId},
+            #{event.amount},
+            #{event.success},
+            #{event.outcome},
+            #{event.orderState},
+            #{event.createdAtMs})
         ]]>
     </insert>
 </mapper>

@@ -3,27 +3,39 @@
 <mapper namespace="com.voucherx.fulfillment.mapper.ActivityControlMapper">
     <select id="count" resultType="long" useCache="false">
         <![CDATA[
-SELECT COUNT(*) FROM tb_activity_control WHERE voucher_id=#{voucherId}
+        SELECT COUNT(*)
+        FROM tb_activity_control
+        WHERE voucher_id=#{voucherId}
         ]]>
     </select>
     <insert id="insertIfAbsent">
         <![CDATA[
-INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (#{voucherId})
+        INSERT IGNORE INTO tb_activity_control(voucher_id)
+        VALUES (#{voucherId})
         ]]>
     </insert>
     <select id="lockShared" resultType="com.voucherx.fulfillment.ActivityGate$Control" useCache="false">
         <![CDATA[
-SELECT state,epoch FROM tb_activity_control WHERE voucher_id=#{voucherId} FOR SHARE
+        SELECT state, epoch
+        FROM tb_activity_control
+        WHERE voucher_id=#{voucherId} FOR SHARE
         ]]>
     </select>
     <select id="isNormal" resultType="boolean" useCache="false">
         <![CDATA[
-SELECT COUNT(*)=1 FROM tb_activity_control WHERE voucher_id=#{voucherId} AND state='NORMAL' AND epoch=#{epoch}
+        SELECT COUNT(*)=1
+        FROM tb_activity_control
+        WHERE voucher_id=#{voucherId}
+        AND state='NORMAL'
+        AND epoch=#{epoch}
         ]]>
     </select>
     <select id="countFrozen" resultType="long" useCache="false">
         <![CDATA[
-SELECT COUNT(*) FROM tb_activity_control WHERE voucher_id=#{voucherId} AND state<>'NORMAL'
+        SELECT COUNT(*)
+        FROM tb_activity_control
+        WHERE voucher_id=#{voucherId}
+        AND state<>'NORMAL'
         ]]>
     </select>
 </mapper>

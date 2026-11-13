@@ -7,6 +7,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import java.time.Clock;
 
+/**
+ * 周期扫描过期交易：逐个关闭超时未付订单，并分批把可用但已到期的券标为 EXPIRED。
+ * <p>
+ * 每笔关单通过独立服务事务加锁复核；扫描不是唯一时间校验点，付款和用券路径也检查截止时间。
+ */
 @Component
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)
 public class CommerceExpiryJob {
@@ -24,6 +29,9 @@ public class CommerceExpiryJob {
         this.clock = clock;
     }
 
+    /**
+     * 分别扫描 PURCHASE、CONSUMPTION 的有限候选集并逐个调用 expire；单笔失败记日志待后续重试，最后清理到期 AVAILABLE 券。
+     */
     @Scheduled(fixedDelayString = "${voucherx.commerce.expiry-interval-millis:10000}")
     public void tick() {
         try {

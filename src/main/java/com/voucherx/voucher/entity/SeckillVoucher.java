@@ -5,19 +5,52 @@ import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDateTime;
 
+/**
+ * 秒杀活动及库存配置，映射 tb_seckill_voucher；用于入口时间校验、安全初始化和最终建单扣库存。
+ */
 @TableName("tb_seckill_voucher")
 public class SeckillVoucher {
 
+    /**
+     * 券模板/活动主键，与模板 tb_voucher.id 对应。
+     */
     @TableId
     private Long voucherId;
+    /**
+     * 活动初始总库存；安全初始化用来判断是否从未消费。
+     */
     private Integer totalStock;
+    /**
+     * SINGLE 模式 MySQL 剩余库存；BUCKET 模式实际余量由桶表汇总。
+     */
     private Integer stock;
+    /**
+     * SINGLE 单行库存或 BUCKET 分桶库存。
+     */
     private String stockMode;
+    /**
+     * 库存桶数量；BUCKET 模式须为正数。
+     */
     private Integer bucketCount;
+    /**
+     * 库存布局版本，用于拒绝布局不匹配的消息。
+     */
     private Integer layoutVersion;
+    /**
+     * 活动开始本地日期时间，入口按系统时区转换为 Unix 毫秒。
+     */
     private LocalDateTime beginTime;
+    /**
+     * 活动结束本地日期时间，入口按系统时区转换为 Unix 毫秒。
+     */
     private LocalDateTime endTime;
+    /**
+     * 数据库创建时间。
+     */
     private LocalDateTime createTime;
+    /**
+     * 数据库更新时间。
+     */
     private LocalDateTime updateTime;
 
     public Long getVoucherId() {

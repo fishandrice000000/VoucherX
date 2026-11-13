@@ -13,11 +13,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 秒杀订单的 MySQL 事务边界。
- *
- * SINGLE 模式：条件扣减活动库存行。
- * BUCKET 模式：按消息起始桶开始，有界尝试后续桶，只扣实际成功的那一行。
- * 桶扣减与订单插入必须属于同一个事务；任何一步失败都回滚。
+ * 异步建单的 MySQL 事务边界：校验受理依据、条件扣库存、插购买订单、固定权益快照、更新请求成功。
+ * <p>
+ * 这些操作共用同一事务；库存不足、唯一约束冲突或后续异常均回滚。
+ * SINGLE 扣活动库存行，BUCKET 从消息起始桶开始有界寻找可扣减桶。
+ * <p>
+ * 正常经 Spring 代理返回仅表示购买订单创建完成，付款发券继续阅读
+ * {@link com.voucherx.commerce.CommerceService#simulate}。
  */
 @Service
 public class OrderPersistenceService {
@@ -47,6 +49,18 @@ public class OrderPersistenceService {
         this.transactionDelay = transactionDelay;
     }
 
+    /**
+     * 先通过账本守卫持有活动共享锁和请求行锁，再检查同 requestId 是否已有订单。
+     * <p>
+     * 重复投递返回原订单，不重复扣库存；新请求检查一人一单、活动和布局后条件扣 MySQL 库存，
+     * 插入订单并回填自增 ID，初始化 PENDING_PAYMENT 及权益快照，最后把请求更新为 SUCCEEDED。
+     * 该方法没有发送 MQ 或操作 Redis；代理事务提交后消费者才能 ACK。
+     *
+     * @param message
+     *                    经解析且将与账本进一步核对的订单消息
+     *
+     * @return 订单 ID 及是否本次新建；经事务代理正常返回时事务已提交
+     */
     @Transactional(rollbackFor = Exception.class)
     public OrderPersistResult persist(SeckillOrderMessage message) {
         ledger.guard(message);
@@ -100,6 +114,16 @@ public class OrderPersistenceService {
         return new OrderPersistResult(order.getId(), true);
     }
 
+    /**
+     * 在一个外层事务内顺序调用 persist；内部调用共用当前事务，任一失败则整批回滚。
+     * <p>
+     * 不是为每条另开事务，也不是 JDBC 批执行；消费者在整体回滚后再逐条降级。
+     *
+     * @param messages
+     *                     消费者已限制数量和总字节数的非空批次
+     *
+     * @return 与输入顺序一致的订单结果列表
+     */
     @Transactional(rollbackFor = Exception.class)
     public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {
         // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
@@ -109,6 +133,16 @@ public class OrderPersistenceService {
         return results;
     }
 
+    /**
+     * 通过 stock 大于 0 的条件更新扣减一份 MySQL 单库存；受影响行数为 0 则报售罄。
+     *
+     * @param message
+     *                     用于定位活动的业务消息
+     * @param activity
+     *                     已读取的活动配置
+     *
+     * @return SINGLE 模式记录的桶号 0
+     */
     private Integer deductSingleStock(SeckillOrderMessage message, SeckillVoucher activity) {
         int changed = seckillVoucherMapper.deductStock(message.voucherId());
         if (changed == 0) {
@@ -117,6 +151,20 @@ public class OrderPersistenceService {
         return 0;
     }
 
+    /**
+     * 先验证桶布局完整，再从消息起始桶循环尝试配置允许的有限个桶，返回实际扣减成功的桶。
+     * <p>
+     * 尝试耗尽后汇总剩余库存：总量为 0 是 SOLD_OUT，其他桶还有库存则是 LOCAL_SOLD_OUT。
+     *
+     * @param message
+     *                          包含计划起始桶的消息
+     * @param activity
+     *                          提供桶数量的活动配置
+     * @param layoutVersion
+     *                          已核验的布局版本
+     *
+     * @return 实际成功扣减的桶号，可能不同于计划起始桶
+     */
     private Integer deductBucket(SeckillOrderMessage message, SeckillVoucher activity,
             int layoutVersion) {
         int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
@@ -154,6 +202,16 @@ public class OrderPersistenceService {
                 "有界桶尝试耗尽，仍有其他桶库存");
     }
 
+    /**
+     * 核验消息库存模式及布局版本；SINGLE 兼容缺少布局的旧消息，BUCKET 必须显式匹配。
+     *
+     * @param message
+     *                          消息中的模式及布局信息
+     * @param activityMode
+     *                          数据库当前活动模式
+     * @param layoutVersion
+     *                          数据库当前布局版本
+     */
     private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode,
             int layoutVersion) {
         String messageMode = message.stockMode();

@@ -6,22 +6,64 @@ import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDateTime;
 
+/**
+ * 商户详情实体，映射 tb_shop；既可从 MySQL 回源读取，也可从 Redis JSON 反序列化。
+ */
 @TableName("tb_shop")
 public class Shop {
 
+    /**
+     * 商户自增主键，用户券的 shopId 限制可消费商户。
+     */
     @TableId(type = IdType.AUTO)
     private Long id;
+    /**
+     * 商户名称。
+     */
     private String name;
+    /**
+     * 商户分类 ID。
+     */
     private Long typeId;
+    /**
+     * 商户展示图片信息。
+     */
     private String images;
+    /**
+     * 商户所在商圈。
+     */
     private String area;
+    /**
+     * 商户地址。
+     */
     private String address;
+    /**
+     * 商户人均价格，单位分；抢券和消费应付金额不从此字段计算。
+     */
     private Long avgPrice;
+    /**
+     * 商户销量展示字段。
+     */
     private Integer sold;
+    /**
+     * 商户评论数量。
+     */
     private Integer comments;
+    /**
+     * 商户评分，放大 10 倍存储。
+     */
     private Integer score;
+    /**
+     * 营业时间展示文本。
+     */
     private String openHours;
+    /**
+     * 数据库创建时间。
+     */
     private LocalDateTime createTime;
+    /**
+     * 数据库更新时间。
+     */
     private LocalDateTime updateTime;
 
     public Long getId() {

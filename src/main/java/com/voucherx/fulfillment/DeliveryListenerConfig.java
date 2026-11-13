@@ -7,8 +7,23 @@ import org.springframework.boot.autoconfigure.amqp.SimpleRabbitListenerContainer
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * 配置消费者的手动确认和小批次交付方式；默认一次一条，由业务代码决定提交后何时 ACK。
+ */
 @Configuration
 public class DeliveryListenerConfig {
+    /**
+     * 在 Boot 默认配置上启用 MANUAL ACK 和批监听；实际批大小由开关决定，预取数与事务批次是不同配置。
+     *
+     * @param connection
+     *                       RabbitMQ 连接工厂
+     * @param configurer
+     *                       Spring Boot 默认监听配置
+     * @param properties
+     *                       投递和批处理配置
+     *
+     * @return 主队列监听器使用的容器工厂
+     */
     @Bean
     public SimpleRabbitListenerContainerFactory deliveryContainerFactory(ConnectionFactory connection,
             SimpleRabbitListenerContainerFactoryConfigurer configurer, DeliveryProperties properties) {

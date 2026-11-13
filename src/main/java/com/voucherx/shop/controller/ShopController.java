@@ -10,6 +10,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 公开的商户详情入口，是入门指南中的缓存查询支线。
+ *
+ * @see com.voucherx.shop.service.ShopQueryService
+ */
 @RestController
 @RequestMapping("/api/shops")
 public class ShopController {
@@ -20,6 +25,14 @@ public class ShopController {
         this.shopQueryService = shopQueryService;
     }
 
+    /**
+     * 查询商户详情并统一包装响应；服务返回空值时转换为商户不存在的业务错误。
+     *
+     * @param shopId
+     *                   URL 中的商户 ID
+     *
+     * @return 商户详情
+     */
     @GetMapping("/{shopId}")
     public ApiResponse<Shop> getShop(@PathVariable Long shopId) {
         Shop shop = shopQueryService.getShop(shopId);

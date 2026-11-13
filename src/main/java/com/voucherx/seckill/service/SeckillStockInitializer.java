@@ -43,6 +43,12 @@ public class SeckillStockInitializer implements ApplicationRunner {
         this.stockService = stockService;
     }
 
+    /**
+     * 启动后逐个检查活动并尝试安全初始化；单个活动失败记日志，不阻断其他活动检查。
+     *
+     * @param args
+     *                 Spring Boot 启动参数；本流程不读取其内容
+     */
     @Override
     public void run(ApplicationArguments args) {
         List<SeckillVoucher> activities;
@@ -63,8 +69,12 @@ public class SeckillStockInitializer implements ApplicationRunner {
     }
 
     /**
-     * 供启动流程与测试显式调用。返回 true 表示 Redis 库存已存在或已安全初始化；
-     * false 表示布局缺失、历史数据不满足条件或初始化失败。
+     * 按活动 ID 加载配置后执行安全初始化；用于显式初始化或测试准备。
+     *
+     * @param voucherId
+     *                      活动 ID
+     *
+     * @return Redis 已存在或本次成功初始化为 true；活动不存在、条件不满足或写入失败为 false
      */
     public boolean initializeSafely(Long voucherId) {
         SeckillVoucher activity = seckillVoucherMapper.selectById(voucherId);
@@ -74,6 +84,18 @@ public class SeckillStockInitializer implements ApplicationRunner {
         return initializeIfSafe(activity);
     }
 
+    /**
+     * 先保证活动控制行存在；Redis 库存已存在就直接保留。
+     * <p>
+     * 库存缺失时，必须没有未结请求、没有非正常控制状态、没有历史订单。
+     * SINGLE 还要求当前库存等于总库存；BUCKET 要求桶连续覆盖且总量、剩余量均等于初始总量。
+     * 不能证明是未消费初始状态时拒绝自动重建，交给专门恢复流程处理。
+     *
+     * @param activity
+     *                     从 MySQL 读取的活动配置
+     *
+     * @return 可以保留现有库存或安全创建 Redis 库存时为 true
+     */
     private boolean initializeIfSafe(SeckillVoucher activity) {
         Long voucherId = activity.getVoucherId();
         controls.insertIfAbsent(voucherId);

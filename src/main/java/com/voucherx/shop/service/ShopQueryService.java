@@ -20,7 +20,10 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 商户缓存读取。Cache Aside 的读写逻辑集中在这里，Controller 不感知缓存细节。
+ * 商户查询的缓存支线：先读 Redis，未命中时用短期互斥锁协调回源 MySQL。
+ * <p>
+ * 不存在的商户也会短期缓存，正常缓存加随机有效期，分别缓解缓存穿透和集中失效。
+ * Redis 故障或等待超时后仍允许回源；该锁用于减少重复查库，不是业务一致性的唯一保障。
  */
 @Service
 public class ShopQueryService {
@@ -47,7 +50,13 @@ public class ShopQueryService {
     }
 
     /**
-     * 返回 null 表示商户不存在。空值缓存用于防止缓存穿透。
+     * 先查缓存；未命中则尝试抢锁，持锁者二次检查后查库、回填缓存，并在 finally 中释放自己的锁。
+     * 其他请求短暂等待并重新读缓存；等待超过上限后直接查库，本次不回填。
+     *
+     * @param shopId
+     *                   待查询的商户 ID
+     *
+     * @return 商户详情；数据库不存在或命中空值缓存时为 {@code null}
      */
     public Shop getShop(Long shopId) {
         String cacheKey = RedisKeys.shopCache(shopId);
@@ -86,6 +95,16 @@ public class ShopQueryService {
         return shopMapper.selectById(shopId);
     }
 
+    /**
+     * 持有重建锁时查 MySQL 并回填：不存在写空字符串短缓存，存在写带随机有效期的 JSON。
+     *
+     * @param shopId
+     *                     商户 ID
+     * @param cacheKey
+     *                     对应的 Redis 商户缓存键
+     *
+     * @return 数据库结果；缓存写入或序列化失败不影响已查到的结果
+     */
     private Shop loadFromDatabaseAndCache(Long shopId, String cacheKey) {
         Shop shop = shopMapper.selectById(shopId);
         if (shop == null) {
@@ -100,6 +119,14 @@ public class ShopQueryService {
         return shop;
     }
 
+    /**
+     * 区分真正未命中、空值命中和商户 JSON 命中；Redis 读取失败按未命中处理，损坏 JSON 尝试删除。
+     *
+     * @param cacheKey
+     *                     商户缓存键
+     *
+     * @return 含命中标志的结果；命中时商户仍可能为空
+     */
     private CacheLookup readCache(String cacheKey) {
         try {
             String value = redisTemplate.opsForValue().get(cacheKey);
@@ -120,6 +147,16 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 尽力写入缓存；Redis 故障只记录日志，保留数据库查询结果。
+     *
+     * @param cacheKey
+     *                     商户缓存键
+     * @param value
+     *                     商户 JSON 或表示不存在的空字符串
+     * @param ttl
+     *                     缓存有效时长
+     */
     private void writeCache(String cacheKey, String value, Duration ttl) {
         try {
             redisTemplate.opsForValue().set(cacheKey, value, ttl);
@@ -128,6 +165,16 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 用 SET NX 和过期时间抢缓存重建锁；返回失败时由外层等待并重试。
+     *
+     * @param lockKey
+     *                      商户级重建锁键
+     * @param lockValue
+     *                      本次请求的随机锁令牌
+     *
+     * @return 成功持锁时为 {@code true}；竞争失败或 Redis 异常时为 {@code false}
+     */
     private boolean tryLock(String lockKey, String lockValue) {
         try {
             Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
@@ -139,6 +186,14 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 通过 Lua 比较令牌后删除锁，避免原锁过期后误删其他请求取得的新锁。
+     *
+     * @param lockKey
+     *                      商户级重建锁键
+     * @param lockValue
+     *                      本次持锁令牌
+     */
     private void releaseLock(String lockKey, String lockValue) {
         try {
             redisTemplate.execute(shopLockReleaseScript, List.of(lockKey), lockValue);
@@ -147,6 +202,12 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 尽力删除损坏的缓存内容，删除失败只记日志。
+     *
+     * @param key
+     *                需要删除的缓存键
+     */
     private void safeDelete(String key) {
         try {
             redisTemplate.delete(key);
@@ -155,6 +216,11 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 在正常缓存基础有效期上增加随机秒数，分散批量缓存的失效时刻。
+     *
+     * @return 本次商户缓存的有效时长
+     */
     private Duration shopTtl() {
         long extra = properties.ttlRandomSeconds() <= 0
                 ? 0
@@ -162,6 +228,9 @@ public class ShopQueryService {
         return Duration.ofSeconds(properties.ttlSeconds() + extra);
     }
 
+    /**
+     * 抢锁失败后暂停 30 毫秒，避免忙循环；被中断时保留线程中断标记。
+     */
     private void sleepBriefly() {
         try {
             Thread.sleep(30);
@@ -170,15 +239,41 @@ public class ShopQueryService {
         }
     }
 
+    /**
+     * 缓存读取结果；hit 区分“没有缓存”和“缓存明确表示商户不存在”。
+     *
+     * @param hit
+     *                 是否命中了缓存（包括空值缓存）
+     * @param shop
+     *                 商户详情；未命中或空值命中时为空
+     */
     private record CacheLookup(boolean hit, Shop shop) {
+        /**
+         * 构造未命中结果，外层需要尝试回源。
+         *
+         * @return hit 为 false 的结果
+         */
         static CacheLookup miss() {
             return new CacheLookup(false, null);
         }
 
+        /**
+         * 构造空值命中结果，表示已确认商户不存在，无需立即查库。
+         *
+         * @return hit 为 true、shop 为空的结果
+         */
         static CacheLookup emptyValue() {
             return new CacheLookup(true, null);
         }
 
+        /**
+         * 构造正常商户命中结果。
+         *
+         * @param shop
+         *                 从缓存反序列化的商户
+         *
+         * @return hit 为 true 的结果
+         */
         static CacheLookup hit(Shop shop) {
             return new CacheLookup(true, shop);
         }

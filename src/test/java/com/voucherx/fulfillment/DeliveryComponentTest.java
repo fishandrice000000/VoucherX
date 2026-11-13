@@ -11,6 +11,12 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
 
+/**
+ * 入门指南的真实组件对照测试：手动触发 Outbox，通过 RabbitMQ 消费完成建单，再观察交易状态。
+ * <p>
+ * 使用隔离的 MySQL、Redis 和 RabbitMQ；关闭自动投递以便明确控制发送时刻，显式开启模拟支付。
+ * 阅读正常业务主线从 {@link #realPurchaseIssueCancelRelockAndRedeem()} 开始。
+ */
 @TestPropertySource(properties = { "voucherx.delivery.enabled=false", "voucherx.commerce.simulation-enabled=true",
         "voucherx.fault.enabled=true" })
 class DeliveryComponentTest extends AbstractIntegrationTest {
@@ -40,6 +46,10 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         faults.clear();
     }
 
+    /**
+     * 验证“受理不等于建单”：受理后为 ACCEPTED，手动投递并等待消费后才为 SUCCEEDED。
+     * 同用户同幂等键重试复用 requestId，数据库只创建一单、扣一份库存。
+     */
     @Test
     void realComponentsDeliverAcceptedRequestAndReplayIdempotently() {
         createUser(1);
@@ -57,6 +67,15 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isEqualTo(9);
     }
 
+    /**
+     * 串联抢券、异步建购买单、付款发券、消费锁券、取消释放、重新锁券和付款核销。
+     * <p>
+     * 本测试用户与活动均为 1：买券支付 100 分，所发券面额 1000 分，消费原价 2000 分，
+     * 实付 1000 分。与指南中的示例金额不同，调用顺序相同。
+     * <p>
+     * 同时检查支付事件重放不重复发券、已取消旧消费单的迟到付款不能核销新锁、
+     * 重复成功付款不重复核销，以及已付款消费单不能按未付取消流程关闭。
+     */
     @Test
     void realPurchaseIssueCancelRelockAndRedeem() {
         createUser(1);

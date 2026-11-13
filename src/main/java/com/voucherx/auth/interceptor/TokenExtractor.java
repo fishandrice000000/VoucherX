@@ -10,6 +10,14 @@ public final class TokenExtractor {
     private TokenExtractor() {
     }
 
+    /**
+     * 只解析 Authorization 请求头，兼容 Bearer 前缀和直接传入 Token；凭证有效性由拦截器检查。
+     *
+     * @param request
+     *                    当前 HTTP 请求
+     *
+     * @return 去除前缀及首尾空格的 Token；请求头缺失或空白时为 {@code null}
+     */
     public static String extract(HttpServletRequest request) {
         String authorization = request.getHeader("Authorization");
         if (authorization == null || authorization.isBlank()) {

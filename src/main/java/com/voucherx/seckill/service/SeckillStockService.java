@@ -159,23 +159,34 @@ public class SeckillStockService {
     }
 
     /**
-     * 按用户、请求和代次核对预留归属后幂等释放；不会无条件增加库存。
+     * 05 的 Redis 释放适配层；调用前必须已提交 MySQL 关闭屏障，且当前持有活动/请求/补偿保护锁。
      * <p>
-     * 调用者应先通过数据库关闭屏障保证旧消息不能再建单。发布超时、NACK 或路由失败本身
-     * 都不能替代这一前提；本方法不负责关闭 MySQL 请求。
-     * 脚本返回 1 表示本次释放，2 表示此前已释放；Redis 异常时记录日志并返回 false。
+     * KEYS 顺序为 stock、users、request、owners、gate；ARGV 为
+     * userId、reason、requestId、epoch，没有 compensationId。
+     * 脚本检查门禁（缺失时按 NORMAL/1）、库存/请求键存在，以及请求 Hash 的 requestId、userId、epoch。
+     * <p>
+     * 随后原请求 status=RELEASED 直接返回 2，不再次删 owners 或 INCR；status=SUCCESS 拒绝。
+     * 尚未释放时才要求 owners[userId] 仍指向原请求且库存数值合法，再原子移除归属/资格、加回 1、写 RELEASED 并 PERSIST
+     * 请求证据。
+     * 例如旧 R1 已释放而用户新 R2 已占资格，R1 的重复释放不会清掉 R2 的新归属。
+     * <p>
+     * 返回 1（本次释放）与 2（之前已释放）都映射 true；负码、空返回或捕获的 Redis 数据访问异常为 false。
+     * false 不证明“没发生过释放”，也不许可盲目补加；调用方保留持久进度再试或隔离。
+     * 本方法不关闭数据库请求，也不改变 MySQL 活动库存。
      *
      * @param voucherId
-     *                      活动 ID
+     *                      原活动 ID
      * @param userId
      *                      原预留用户 ID
      * @param requestId
-     *                      原预留请求 ID
+     *                      原请求 ID，重试保持不变
      * @param reason
-     *                      释放原因
+     *                      新释放时保存的原因
      * @param epoch
-     *                      原预留所属的恢复代次
-     * @return 已释放时为 true；归属/门禁不满足或 Redis 异常时为 false
+     *                      与当前请求及活动核对的恢复代次
+     * @return 已达到该请求释放结果时为 true，否则由调用方重试或隔离
+     * @see com.voucherx.reconcile.CompensationService#execute
+     * @see com.voucherx.common.redis.RedisKeys
      */
     public boolean release(Long voucherId, Long userId, String requestId, String reason, long epoch) {
         try {

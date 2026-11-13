@@ -112,15 +112,18 @@ public interface SeckillRequestMapper {
     int rejectUnreserved(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
 
     /**
-     * 记录业务关闭及原因，保留原预留状态供后续补偿；SQL 本身不检查原阶段。
+     * 按请求 ID 写 CLOSED、原因和业务更新时间，保留原 reservation 以便后续释放。
+     * <p>
+     * SQL 不自带旧阶段或无订单条件，调用者须持活动/请求锁检查允许关闭；补偿 prepare 还须同事务保存补偿意图和完成 Outbox。
+     * 只调用本 Mapper 不等于已建立完整补偿协议，更不表示 Redis 已返还。
      *
      * @param id
-     *                   请求 ID
+     *                   已持锁核验可关闭的请求 ID
      * @param reason
-     *                   关闭或诊断原因
+     *                   关闭原因
      * @param now
-     *                   当前 Unix 毫秒
-     * @return 更新行数
+     *                   更新 Unix 毫秒
+     * @return 实际更新行数
      */
     int close(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
 
@@ -147,40 +150,47 @@ public interface SeckillRequestMapper {
     long countUnsettled(@Param("voucherId") long voucherId);
 
     /**
-     * 按核对时间和更新陈旧阈值扫描有限请求 ID；筛选条件不只包含未成功请求。
+     * 扫描 next_check_at_ms 已到且 updated_at_ms 不晚于观察阈值的请求，按检查时间和请求 ID 排序。
+     * <p>
+     * 不按 phase 或 reservation 过滤，成功、意图、受理中和关闭都可被检查；陈旧时间不是请求失败事实。
+     * 这条普通查询不持有处理资格，后续先 claimCheck，再由业务事务复核。
      *
      * @param now
-     *                        当前 Unix 毫秒
+     *                        本轮扫描 Unix 毫秒
      * @param staleBefore
-     *                        只扫描更新时刻不晚于该 Unix 毫秒的请求
+     *                        允许检查的最晚业务更新时间，Unix 毫秒
      * @param limit
-     *                        本轮最多返回条数
-     * @return 待核对请求 ID 列表
+     *                        候选上限
+     * @return 待检查的请求 ID 列表
      */
     java.util.List<String> dueForCheck(@Param("now") long now, @Param("staleBefore") long staleBefore,
             @Param("limit") int limit);
 
     /**
-     * 仅当核对时间已到才推迟下次检查时间，用条件更新协调扫描竞争。
+     * 仅在下次检查时间已到时，将它推迟到 next，协调多个扫描者竞争当前窗口。
+     * <p>
+     * 不写处理令牌或业务终态，也没有跨后续操作持有的租约；不能据此认为未来绝不重复扫描，实际修复仍需锁和幂等。
      *
      * @param id
      *                 请求 ID
      * @param next
-     *                 下一次核对的 Unix 毫秒
+     *                 下一检查 Unix 毫秒
      * @param now
-     *                 当前 Unix 毫秒
-     * @return 成功认领为 1，竞争未命中为 0
+     *                 本轮判断检查是否到期的 Unix 毫秒
+     * @return 成功条件更新为 1，当前窗口已被推进等情况为 0
      */
     int claimCheck(@Param("id") String id, @Param("next") long next, @Param("now") long now);
 
     /**
-     * 记录 Redis 释放证据已核验为 RELEASED；方法自身不执行 Redis 脚本。
+     * 只补记 reservation=RELEASED 及更新时间，不改请求 CLOSED 阶段、不执行 Redis INCR。
+     * <p>
+     * SQL 按请求 ID 更新，阶段和归属条件由持锁补偿服务保护；须在 Redis 已返回本次/此前释放结果后，与补偿进度和审计同事务保存。
      *
      * @param id
-     *                请求 ID
+     *                已确认达到释放结果的请求 ID
      * @param now
-     *                当前 Unix 毫秒
-     * @return 更新行数
+     *                更新 Unix 毫秒
+     * @return 实际更新行数
      */
     int markReleased(@Param("id") String id, @Param("now") long now);
 }

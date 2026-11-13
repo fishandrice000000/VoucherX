@@ -121,9 +121,15 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 受理后先提交关闭和补偿意图，再执行两次补偿，Redis 库存应只返还一次到 10。
+     * 05 的真实组件支线：从用户/活动 1、库存 10 的受理未投递请求开始，与 04 已付款用券场景分开。
      * <p>
-     * 随后尝试迟到的原消息不能建单，说明业务关闭屏障不同于停止某一次投递；补偿实现沿 05 阅读。
+     * prepare 先建立关闭意图，再 execute 两次；最终 Redis 库存只恢复到 10，旧请求直接建单被拒绝、订单为 0，重新诊断为 WAIT。
+     * 验证重复执行不再次返还，以及消费者守卫服从原请求关闭屏障。
+     * <p>
+     * 本用例没有在 Redis 释放后、数据库补记前强杀进程，也没有穷尽网络故障交错；那些恢复分支的机制需结合源码分析。
+     *
+     * @see com.voucherx.reconcile.CompensationService#prepare
+     * @see com.voucherx.reconcile.CompensationService#execute
      */
     @Test
     void durableClosureAndRepeatedCompensationReturnStockOnce() {

@@ -8,6 +8,16 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import java.time.Clock;
 
+/**
+ * 05 的有界扫描入口，自动运行默认关闭；扫描时间只挑选需检查对象，不决定请求已失败。
+ * <p>
+ * 先检查到期且进展陈旧的请求，再尝试已到期的 PENDING 补偿。不同执行者可看到同一候选，
+ * 具体安全性依靠请求/补偿行锁和 Redis 幂等标记，而不是声称扫描领取永不重复。
+ *
+ * @see ReconcileProperties
+ * @see ReconciliationService
+ * @see CompensationService
+ */
 @Component
 public class ReconciliationJob {
     private static final Logger log = LoggerFactory.getLogger(ReconciliationJob.class);
@@ -28,6 +38,9 @@ public class ReconciliationJob {
         this.clock = clock;
     }
 
+    /**
+     * 按固定延迟调 scan；enabled=false 时不自动扫描，异常记日志，已保存的下次检查时间和补偿进度留待后续。
+     */
     @Scheduled(fixedDelayString = "${voucherx.reconcile.interval-millis:5000}")
     public void tick() {
         if (!config.enabled())
@@ -39,6 +52,19 @@ public class ReconciliationJob {
         }
     }
 
+    /**
+     * 取本轮起始 now，有限查询 next_check 到期且 updated_at 不晚于 now-staleMillis 的请求，阶段不限。
+     * <p>
+     * 逐条用条件更新推迟 next_check，成功后调用 repair；一次正常返回即累加计数，即使结果是 WAIT 或 ISOLATED。
+     * 单条 repair 异常记日志后继续；领取本身或扫描查询异常可结束本轮。
+     * <p>
+     * 随后有限查询到期 PENDING 补偿并逐条 execute，这部分调用不计入返回数。
+     * 两轮查询都使用本轮起始 now，执行期间新到期对象可留到下轮；显式 scan 不检查 enabled，便于维护或测试调用。
+     *
+     * @return 本轮请求 repair 正常返回的次数；不含后半补偿执行数，也不等于返还库存数
+     * @see com.voucherx.fulfillment.mapper.SeckillRequestMapper#claimCheck
+     * @see com.voucherx.reconcile.mapper.CompensationMapper#due
+     */
     public int scan() {
         long now = clock.millis();
         var ids = requests.dueForCheck(now, now - config.staleMillis(), config.scanSize());

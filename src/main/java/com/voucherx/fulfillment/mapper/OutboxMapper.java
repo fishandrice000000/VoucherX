@@ -128,26 +128,32 @@ public interface OutboxMapper {
     String stateByRequest(@Param("id") String id);
 
     /**
-     * 仅将 SENT 事件安排为立即重发，尝试次数用尽时改为隔离。
+     * 仅匹配原 SENT 事件，按现有 attempts 与预算选择 PENDING 或 QUARANTINED，并设置 next_at_ms、清掉令牌。
+     * <p>
+     * 不增加 attempts，不生成新 eventId，也不在这里发 MQ；尝试数要等发送器下一次 claim 才增加。
+     * 即使更新 1 行也可能已进入 QUARANTINED，不能把更新命中标签当作一定重投成功。
      *
      * @param id
-     *                        抢券请求 ID
+     *                        请求 ID，不是事件 ID
      * @param maxAttempts
-     *                        允许的最大发布尝试次数
+     *                        发送认领尝试预算，来自 DeliveryProperties
      * @param now
-     *                        当前 Unix 毫秒
-     * @return 更新行数；非 SENT 不修改
+     *                        本次可重发 Unix 毫秒
+     * @return 更新行数；旧状态不是 SENT 或事件缺失时为 0
      */
     int scheduleReplay(@Param("id") String id, @Param("maxAttempts") int maxAttempts, @Param("now") long now);
 
     /**
-     * 按请求 ID 把事件标为 DONE 并清空令牌，用于结束投递跟踪。
+     * 按请求 ID 将原事件写 DONE、清空认领令牌并记录原因，停止普通发送扫描。
+     * <p>
+     * 这不会撤回已经在网络或队列中的消息，也不终止持有旧快照的发送线程。
+     * prepare 还必须持锁写 CLOSED，并让消费者 guard 服从同一请求屏障，才能阻止迟到建单。
      *
      * @param id
-     *                   抢券请求 ID
+     *                   需要结束投递跟踪的请求 ID
      * @param result
-     *                   发布结果或完成原因
-     * @return 更新行数
+     *                   完成投递跟踪的原因，例如 REQUEST_CLOSED
+     * @return 实际更新行数
      */
     int completeRequest(@Param("id") String id, @Param("result") String result);
 }

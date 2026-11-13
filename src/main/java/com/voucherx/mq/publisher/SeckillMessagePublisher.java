@@ -22,10 +22,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 把订单消息编码为持久化 AMQP 消息，并等待本次发布的 Broker 确认。
+ * 03 的发布器：Java 订单消息 → JSON 持久化 AMQP 消息 → Broker 发布确认分类。
  * <p>
- * 固定 messageId 来自 Outbox 的 eventId；每次发送另有独立 CorrelationData ID 区分发布尝试。
- * 确认及路由成功只证明发布阶段完成，建单成功要由消费者事务和 MySQL 流水确认。
+ * 业务 messageId 固定等于 Outbox eventId；每次发送另建 CorrelationData ID，避免混淆重发与新业务。
+ * application.yml 启用 correlated confirm、publisher returns 和 mandatory，本实现据此观察
+ * ACK/NACK 及不可路由退回。
+ * <p>
+ * Confirm 是生产者收到的发布答复，basicAck 是消费者确认交付；实际购买单成功由 MySQL 事务确定。
+ * 消费与发布回写可交错，不能依赖 SENT 必然早于 SUCCEEDED。
+ *
+ * @see com.voucherx.fulfillment.OutboxDispatcher
+ * @see PublishResult
+ * @see com.voucherx.mq.consumer.SeckillOrderConsumer
  */
 @Component
 public class SeckillMessagePublisher {
@@ -52,7 +60,6 @@ public class SeckillMessagePublisher {
      *
      * @param message
      *                    由请求账本生成、保持固定身份的业务消息
-     *
      * @return 本次发布和路由的确认结果
      */
     public PublishResult publish(SeckillOrderMessage message) {
@@ -67,7 +74,6 @@ public class SeckillMessagePublisher {
      *                       保持原业务身份的消息
      * @param retryCount
      *                       写入消息头的重试次数
-     *
      * @return 本次发布确认结果
      */
     public PublishResult publishRetry(SeckillOrderMessage message, int retryCount) {
@@ -76,22 +82,27 @@ public class SeckillMessagePublisher {
     }
 
     /**
-     * 序列化后发送，再等待配置时限内的 Broker Confirm，并检查 mandatory 退回结果。
+     * 先以本次独立 CorrelationData 构造并发送消息，再在配置时限内等待 Confirm。
      * <p>
-     * 连接阶段失败为 NOT_SENT；Broker 拒绝为 NACKED；无法路由为 RETURNED；
-     * 超时、中断或其他发送异常为 UNKNOWN。UNKNOWN 不能推断消息未入队，后续重复发送须依靠业务幂等。
-     * 本方法不更改 MySQL 请求、Outbox 状态或 Redis 库存。
+     * 序列化失败抛 IllegalStateException；连接阶段 AmqpConnectException 映射 NOT_SENT，其他 AMQP
+     * 发送异常映射 UNKNOWN。
+     * 有确认后先判断 ACK，NACK 映射 NACKED；ACK 且存在 returned 信息映射 RETURNED，其余为 CONFIRMED。
+     * 等待超时、执行异常或线程中断映射 UNKNOWN，中断时还恢复中断标记。
+     * <p>
+     * UNKNOWN 不能推断未入队，CONFIRMED 也不表示消费者已成功建单。这里只分类，不改请求/Outbox 或释放 Redis。
+     * 发送器负责安排原事件重试；消息可能已经被消费而确认尚未被本线程处理。
      *
      * @param message
-     *                       业务消息
+     *                       固定业务身份的订单消息
      * @param exchange
-     *                       本次发布目标交换机
+     *                       本次目标交换机
      * @param routingKey
-     *                       路由键
+     *                       本次目标路由键
      * @param retryCount
-     *                       消息头中的重试次数
-     *
-     * @return 仅描述本次发送结果的枚举
+     *                       写入消息头的重试次数
+     * @return 本次发布尝试的结果分类
+     * @throws IllegalStateException
+     *                                   无法把消息编码为 JSON
      */
     private PublishResult publishInternal(SeckillOrderMessage message, String exchange,
             String routingKey, int retryCount) {
@@ -138,17 +149,18 @@ public class SeckillMessagePublisher {
     }
 
     /**
-     * 设置 JSON/UTF-8、持久化投递模式、固定业务消息 ID 和重试头，再序列化负载。
-     *
-     * @throws JsonProcessingException
-     *                                     业务消息无法编码为 JSON
+     * 用 ObjectMapper 把 record 编码为 JSON 字节，设置 JSON/UTF-8 和 PERSISTENT 投递模式。
+     * <p>
+     * AMQP 属性 messageId 与 JSON 内 messageId 都使用固定 E1；x-retry-count 是兼容重试头。
+     * 持久化属性只是消息发布配置，不替代 Broker 确认、订单提交或消费者 ACK。
      *
      * @param payload
-     *                       订单业务负载
+     *                       由持久化请求生成的负载
      * @param retryCount
-     *                       供诊断的重试次数
-     *
-     * @return 发给 RabbitTemplate 的 AMQP 消息
+     *                       写入诊断消息头的次数
+     * @return 尚未发送的 AMQP 消息对象
+     * @throws JsonProcessingException
+     *                                     消息无法编码为 JSON
      */
     private Message buildMessage(SeckillOrderMessage payload, int retryCount)
             throws JsonProcessingException {

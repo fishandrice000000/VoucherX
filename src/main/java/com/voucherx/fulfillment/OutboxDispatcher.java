@@ -11,11 +11,15 @@ import java.time.Clock;
 import java.util.UUID;
 
 /**
- * 把已提交的 Outbox 事件交给 RabbitMQ，接续 HTTP 线程结束后的抢券流程。
+ * 03 的发送执行者：HTTP 已提交受理和待发事件后，由调度线程接续发送。
  * <p>
- * 短数据库操作用于认领和回写，等待 Broker 确认发生在这些操作之间，不用长事务包住网络等待。
- * 租约过期或确认结果未知都可能导致重复发送；消费者按固定请求身份幂等建单。
+ * 扫描、认领和结果回写是独立数据库操作，等待 Broker Confirm 时不持有包住全流程的数据库事务。
+ * 租约到期允许接手，却不终止旧线程或撤回其网络发送；重复消息靠账本和订单幂等处理。
+ * <p>
+ * SENT 是发布结果，SUCCEEDED 是建单结果，消费提交可能早于本线程写 SENT。
+ * QUARANTINED 也只是投递隔离，不能直接映射成用户业务 FAILED 或返还 Redis 库存。
  *
+ * @see RequestLedger#accept
  * @see com.voucherx.mq.publisher.SeckillMessagePublisher
  * @see com.voucherx.mq.consumer.SeckillOrderConsumer
  */
@@ -43,7 +47,7 @@ public class OutboxDispatcher {
     }
 
     /**
-     * 按配置的固定延迟触发扫描；关闭投递开关时跳过，扫描异常保留数据库记录待下轮处理。
+     * 按配置固定延迟调用 dispatch；enabled=false 时跳过自动投递，扫描异常记日志，已认领事件可在租约到期后重新成为候选。
      */
     @Scheduled(fixedDelayString = "${voucherx.delivery.interval-millis:250}")
     public void tick() {
@@ -57,13 +61,24 @@ public class OutboxDispatcher {
     }
 
     /**
-     * 扫描到期且受理依据有效的事件，用随机 claim_token 认领并增加尝试次数。
+     * 完成一轮有界发送：本轮起始时读取 now，扫描到期 PENDING 或租约过期 CLAIMED 的事件。
+     * <ol>
+     * <li>候选 SQL 同时要求活动 NORMAL、请求 ACCEPTED 且代次匹配。</li>
+     * <li>用新 UUID claim_token 条件认领，成功时 attempts 加 1、租约设为
+     * now+leaseMillis；未更新到行则跳过。</li>
+     * <li>读取请求，已终止则尝试标 DONE；发送前普通查询门禁，不正常则延后，最终执行资格仍由消费者事务守卫确认。</li>
+     * <li>构造同一个 R1/E1 的消息并等待 Confirm；CONFIRMED 尝试写 SENT，其余结果按预算写 PENDING 或
+     * QUARANTINED。</li>
+     * </ol>
      * <p>
-     * 业务已终止的事件标为 DONE；活动冻结则延后。发布得到 CONFIRMED 后标记 SENT，
-     * 其他结果按退避时间重试，达到上限则 QUARANTINED。SENT 只表示发布确认，不能表示订单已完成。
-     * 回写必须匹配本次令牌，避免租约过期后的旧任务覆盖新持有者的结果。
+     * 重试时间和租约用本轮起始 now 计算，不是每次网络等待完成后重新取时刻；慢扫描时不能据此推断还剩完整租期。
+     * finish 必须匹配本次令牌，旧认领者即使仍发送了消息也不能覆盖接手者的回写。
+     * 显式调用本方法不检查 enabled，测试可关闭自动扫描后手动触发。
      *
-     * @return 本轮成功由本次持有者回写为 SENT 的事件数
+     * @return 本轮本次令牌成功回写 SENT 的行数；不是已完成订单数，也不是所有实际到达队列的消息数
+     * @see com.voucherx.fulfillment.mapper.OutboxMapper#dueEvents
+     * @see com.voucherx.fulfillment.mapper.OutboxMapper#claim
+     * @see RequestRecord#message()
      */
     public int dispatch() {
         long now = clock.millis();
@@ -104,20 +119,22 @@ public class OutboxDispatcher {
     }
 
     /**
-     * 通过事件 ID、认领令牌和 CLAIMED 状态做条件回写；租约被其他任务接管后旧令牌更新不到记录。
+     * 用 eventId、claim_token 和 CLAIMED 状态条件更新发布结果并清空令牌。
+     * <p>
+     * SQL 不单独要求租约仍未到期；关键是尚未被新的令牌或其他处理改写。
+     * 租约已到期但未被接手时旧令牌仍可能回写；一旦换了新令牌，旧持有者更新数为 0。
      *
      * @param id
-     *                   Outbox 事件 ID
+     *                   固定 Outbox 事件 ID
      * @param token
-     *                   本轮认领令牌
+     *                   本轮认领随机令牌
      * @param state
      *                   SENT、PENDING、DONE 或 QUARANTINED
      * @param result
      *                   发布结果或诊断原因
      * @param next
-     *                   下次可处理的 Unix 毫秒
-     *
-     * @return 实际修改行数；0 表示本次已无回写资格等情况
+     *                   下次允许处理的 Unix 毫秒
+     * @return 实际修改行数；0 表示本次条件已不匹配
      */
     private int finish(String id, String token, String state, String result, long next) {
         return outbox.finish(id, token, state, result, next);

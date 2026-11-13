@@ -50,15 +50,22 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 先通过账本守卫持有活动共享锁和请求行锁，再检查同 requestId 是否已有订单。
+     * 03 的建单事务主体：先守卫并持有活动/请求锁，再按请求 ID 查询已有订单。
      * <p>
-     * 重复投递返回原订单，不重复扣库存；新请求检查一人一单、活动和布局后条件扣 MySQL 库存，
-     * 插入订单并回填自增 ID，初始化 PENDING_PAYMENT 及权益快照，最后把请求更新为 SUCCEEDED。
-     * 该方法没有发送 MQ 或操作 Redis；代理事务提交后消费者才能 ACK。
+     * 同请求已成功则返回原 orderId、created=false；新请求检查一人一单及活动布局，条件扣 MySQL 库存，
+     * 插入购买订单并回填 ID，初始化付款规则快照，最后把请求写为 SUCCEEDED。这些写入共同提交或回滚。
+     * <p>
+     * 订单的 completedAtMs 在插入前设置，只是观测近似点，不能据此判断已经提交。
+     * 调用者为消费者且没有外层事务时，代理正常返回即已提交；在 persistBatch 中的内部调用则仍处于未提交批事务。
+     * <p>
+     * 这里不操作 Redis、不 ACK；提交后仍是 PENDING_PAYMENT，后续付款发券另见 CommerceService。
      *
      * @param message
-     *                    经解析且将与账本进一步核对的订单消息
-     * @return 订单 ID 及是否本次新建；经事务代理正常返回时事务已提交
+     *                    身份将由账本守卫再次核对的 MQ 业务消息
+     * @return 本次新建或复用的订单 ID 和 created 标志；是否已提交取决于外层事务边界
+     * @see com.voucherx.fulfillment.RequestLedger#guard
+     * @see com.voucherx.commerce.CommerceService#initializePurchase
+     * @see #persistBatch
      */
     @Transactional(rollbackFor = Exception.class)
     public OrderPersistResult persist(SeckillOrderMessage message) {
@@ -114,13 +121,17 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 在一个外层事务内顺序调用 persist；内部调用共用当前事务，任一失败则整批回滚。
+     * 通过 Spring 代理开启一个外层事务，再按消息顺序内部调用 this.persist；内部调用不再穿过新的事务代理。
      * <p>
-     * 不是为每条另开事务，也不是 JDBC 批执行；消费者在整体回滚后再逐条降级。
+     * 每项都使用现有事务和同一组事务资源，SQL 仍逐条执行，不是 JDBC batch。
+     * 例如第二项失败，第一项本批扣库存/插订单/改请求的写入也回滚，方法内部第一项返回不代表已提交。
+     * <p>
+     * 外层代理正常返回后，消费者才逐条 ACK；代理回滚后才可进入一次逐条降级。
      *
      * @param messages
-     *                     消费者已限制数量和总字节数的非空批次
-     * @return 与输入顺序一致的订单结果列表
+     *                     消费者已限制大小的非空消息批次
+     * @return 与输入顺序一致的建单结果；正常消费调用在外层代理提交后才取得此列表
+     * @see com.voucherx.mq.consumer.SeckillOrderConsumer
      */
     @Transactional(rollbackFor = Exception.class)
     public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {

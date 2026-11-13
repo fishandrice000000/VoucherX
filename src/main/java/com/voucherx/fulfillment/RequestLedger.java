@@ -42,7 +42,6 @@ public class RequestLedger {
      *
      * @param id
      *               请求 ID
-     *
      * @return 流水快照；不存在时为 {@code null}
      */
     public RequestRecord find(String id) {
@@ -56,7 +55,6 @@ public class RequestLedger {
      *                   已认证用户 ID
      * @param key
      *                   客户端幂等键或服务端生成的键
-     *
      * @return 已有流水；没有命中时为 {@code null}
      */
     public RequestRecord byKey(long userId, String key) {
@@ -64,26 +62,29 @@ public class RequestLedger {
     }
 
     /**
-     * 确认活动 NORMAL，取得当前恢复代次，再生成请求 ID 和事件 ID 插入意图。
+     * 确认活动 NORMAL 并锁住控制行，取当前 epoch，再为新请求生成 requestId 和固定 eventId，插入 INTENT/UNKNOWN。
      * <p>
-     * 初始 INTENT/UNKNOWN 来自表默认值；这一步尚未执行 Redis 预扣，也没有创建 Outbox 或订单。
-     * 经 Spring 事务代理正常返回后，后续 Redis 操作即使失败，意图记录仍可用于核对恢复。
-     * 抢券主线没有外层事务，因此此处单独提交一次；若其他调用方已有事务，则按默认 REQUIRED 传播加入该事务。
+     * 此时只有可核对的意图，没有 Outbox 或订单，Redis 还没预扣。
+     * 主线 SeckillService 没有外层事务，经本方法 Spring 事务代理正常返回后意图已提交，再继续 Redis。
+     * <p>
+     * 注解使用默认 REQUIRED；若调用方已有事务则加入它，提交取决于外层结束，不能把所有方法返回都当作独立提交。
+     * 例如批量测试夹具会在同一外层事务中调用 intent 与 accept。
      *
      * @param user
-     *                    当前用户 ID
+     *                    已认证用户 ID
      * @param voucher
      *                    活动 ID
      * @param key
-     *                    同一用户下唯一的幂等键
+     *                    用户下唯一的客户端幂等键或本次生成的键
      * @param mode
-     *                    SINGLE 或 BUCKET 库存模式
+     *                    SINGLE 或 BUCKET
      * @param bucket
-     *                    计划从哪个库存桶开始；SINGLE 为 0
+     *                    计划起始桶，SINGLE 为 0
      * @param layout
-     *                    活动当前布局版本
-     *
-     * @return 新插入的请求流水
+     *                    本次绑定的库存布局版本
+     * @return 刚插入的意图快照，提交时刻受当前事务传播关系决定
+     * @see com.voucherx.seckill.service.SeckillService#seckill(Long, Long, String)
+     * @see #accept(String)
      */
     @Transactional
     public RequestRecord intent(long user, long voucher, String key, String mode, int bucket, int layout) {
@@ -101,7 +102,6 @@ public class RequestLedger {
      *
      * @param id
      *               要保护的请求 ID
-     *
      * @return 加锁后的当前流水
      */
     public RequestRecord lock(String id) {
@@ -112,17 +112,23 @@ public class RequestLedger {
     }
 
     /**
-     * 在一个 MySQL 事务里把 INTENT 改为 ACCEPTED/RESERVED，并插入 PENDING 的 Outbox 事件。
+     * 在同一个 MySQL 事务中确认受理依据并留下待发事件，接续已成功的 Redis 预留。
+     * <ol>
+     * <li>普通读出请求所属活动，再取得 NORMAL 活动共享锁。</li>
+     * <li>FOR UPDATE 锁请求，核对它的 epoch 等于活动当前代次。</li>
+     * <li>只有 INTENT 才写 ACCEPTED/RESERVED，并用固定 eventId 插入默认 PENDING 的 Outbox。</li>
+     * </ol>
      * <p>
-     * 先要求活动 NORMAL，再锁请求并核对恢复代次。只有 INTENT 阶段执行写入，重复受理不会重复插入事件。
-     * 调用前应已有 Redis 预留成功证据；本方法不会再次扣 Redis、发送 MQ 消息或创建订单。
+     * 状态更新与事件插入一起提交或回滚；非 INTENT 不重复写事件，直接返回当前流水，并不强制把其他阶段改回受理。
+     * 主线没有外层事务，代理正常返回才表示这次受理提交完成；已有外层事务时按 REQUIRED 加入。
      * <p>
-     * 经过 Spring 事务代理正常返回时，两项数据库写入一起提交；任一步失败则一起回滚。
+     * 本方法不验证 Redis 归属证据本身，调用者须已确认预留成功；这里不再扣 Redis、不发送 MQ，也不创建订单。
      *
      * @param id
-     *               Redis 已成功预留的请求 ID
-     *
-     * @return 处理后的流水快照
+     *               已有 Redis 预留成功依据的请求 ID
+     * @return 受理后或重复调用时的当前流水快照
+     * @see OutboxDispatcher#dispatch()
+     * @see com.voucherx.fulfillment.mapper.SeckillRequestMapper#accept
      */
     @Transactional
     public RequestRecord accept(String id) {
@@ -141,16 +147,20 @@ public class RequestLedger {
     }
 
     /**
-     * 在建单事务内校验消息是否仍有有效的持久化受理依据，并持有活动共享锁及请求行锁。
+     * 在扣库存、插单的同一事务内，按活动共享锁 → 请求行锁保护受理依据。
      * <p>
-     * 逐项比较请求、事件、用户、活动、恢复代次和库存布局，只允许 ACCEPTED 或 SUCCEEDED。
-     * 身份匹配后，若活动代次已变化或活动冻结，则抛 StaleDeliveryException，由消费者停止本次旧投递。
-     * 本方法自身不开事务，锁必须覆盖调用者接下来的扣库存和插订单。
+     * 先核对消息和流水身份；找不到流水或身份不符抛 INVALID_REQUEST。
+     * 身份匹配后，活动非 NORMAL 或代次不符抛 StaleDeliveryException；请求 CLOSED 则抛 REQUEST_CLOSED。
+     * 只允许 ACCEPTED 或 SUCCEEDED，其他阶段也停止本次投递。
+     * <p>
+     * 保留 SUCCEEDED 是为了同请求重投能继续查询原订单，而不是再次扣库存。
+     * 本方法自己没有事务注解，调用者须让这些锁覆盖后续库存和订单操作，直到一起提交或回滚。
      *
      * @param message
-     *                    从 MQ 反序列化的业务消息
-     *
-     * @return 已加锁且身份匹配的请求流水
+     *                    已解析且必需字段完整的 MQ 消息
+     * @return 被加锁并通过身份、活动及阶段检查的请求
+     * @see com.voucherx.order.service.OrderPersistenceService#persist
+     * @see RequestRecord#matches
      */
     public RequestRecord guard(SeckillOrderMessage message) {
         var c = gate.lock(message.voucherId());
@@ -169,14 +179,16 @@ public class RequestLedger {
     }
 
     /**
-     * 在调用者的建单事务内将 ACCEPTED 流水改为 SUCCEEDED 并关联购买订单 ID。
+     * 在建单调用者的现有事务内，只把 ACCEPTED 更新为 SUCCEEDED 并关联订单。
      * <p>
-     * 与扣 MySQL 库存、插购买订单及金额快照一起提交；表示建单完成，后续付款和发券仍未发生。
+     * 与条件扣库存、插购买订单和固定付款规则快照一起提交。reservation 不在这里改成 RELEASED，
+     * 它仍可记录原预留事实，不能因此再把成功占用重复统计成未结工作。
+     * 本方法不单独开启事务，也不发送 ACK；消费者要等订单服务事务代理返回。
      *
      * @param id
-     *                    消息中的请求 ID
+     *                    已通过守卫的请求 ID
      * @param orderId
-     *                    本次插入并回填的购买订单 ID
+     *                    刚插入并回填的购买订单 ID
      */
     public void succeed(String id, long orderId) {
         requests.succeed(id, orderId, clock.millis());
@@ -203,17 +215,20 @@ public class RequestLedger {
     }
 
     /**
-     * 消费者遇到确定的业务拒绝后，验证消息身份、活动状态及代次，再关闭仍为 ACCEPTED 的请求。
+     * 在已经回滚的建单调用之外，核对活动、代次及消息身份，处理确定业务拒绝。
      * <p>
-     * 已成功请求不会被覆盖；身份不匹配的消息不能关闭真实请求。
-     * 这里只写数据库关闭事实，Redis 预留的释放由后续补偿链路核对处理。
+     * 身份不符、活动异常、代次不符或已 SUCCEEDED 时返回 false；只有仍为 ACCEPTED 才写 CLOSED。
+     * 其他通过检查的非成功阶段可直接返回 true，因此返回值表示允许消费者确认此拒绝，不等于本次一定改过数据库。
+     * <p>
+     * 消费者仅在 true 时写失败缓存并 ACK；false 时 NACK，不覆盖真实请求结果。
+     * 关闭事实不自动增加 Redis 库存，预留释放另走补偿屏障。
      *
      * @param message
-     *                    失败的投递消息
+     *                    被判定为业务拒绝的投递消息
      * @param reason
-     *                    可记录的业务失败原因
-     *
-     * @return true 表示通过校验且不是成功请求，消费者可确认该业务拒绝；false 表示不能据此确认关闭
+     *                    业务分类名称等关闭原因
+     * @return 是否允许消费者确认此业务拒绝；不是 SQL 更新行数
+     * @see com.voucherx.mq.consumer.SeckillOrderConsumer
      */
     @Transactional
     public boolean fail(SeckillOrderMessage message, String reason) {
@@ -231,14 +246,19 @@ public class RequestLedger {
     }
 
     /**
-     * 遇到暂时性异常时，在验证身份和代次后把 Outbox 安排为待重试，达到次数上限则隔离。
+     * 在单独的服务调用事务中，为暂时性建单异常重新安排原事件。
      * <p>
-     * 业务仍保留受理和预留，不把发布失败或处理异常直接等同于业务失败。
+     * 按活动与请求锁检查身份、非终态、正常状态和 epoch，然后按已有 attempts 写 PENDING 或次数用尽后的 QUARANTINED，
+     * 下次时间为当前时刻加固定 retryMillis，并清空发送认领令牌。
+     * 请求保留受理和预留，eventId 不变；不是生成新的业务请求，也不使用旧的 TTL 重试队列。
+     * <p>
+     * 消费者等此调用正常返回后才 NACK 原交付。检查不满足会直接返回，不能单凭 void 返回就认定必定产生了新重试写入。
      *
      * @param message
-     *                    需重试的消息
+     *                    原投递消息
      * @param reason
-     *                    异常类型等诊断原因
+     *                    异常类型等可记录诊断原因
+     * @see com.voucherx.fulfillment.mapper.OutboxMapper#defer
      */
     @Transactional
     public void defer(SeckillOrderMessage message, String reason) {

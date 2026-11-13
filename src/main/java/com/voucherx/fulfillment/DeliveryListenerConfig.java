@@ -8,21 +8,29 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 配置消费者的手动确认和小批次交付方式；默认一次一条，由业务代码决定提交后何时 ACK。
+ * 主队列监听容器：手动确认、列表形式交付，以及按配置启用的小批次聚合。
+ * <p>
+ * 容器交付列表后由消费者再限制总字节数，最后由订单服务决定数据库事务边界。
+ * 手动确认意味着成功路径在事务提交后才 basicAck，拒绝路径由业务代码选择 ACK 或 NACK。
+ *
+ * @see com.voucherx.mq.consumer.SeckillOrderConsumer#onMessages
  */
 @Configuration
 public class DeliveryListenerConfig {
     /**
-     * 在 Boot 默认配置上启用 MANUAL ACK 和批监听；实际批大小由开关决定，预取数与事务批次是不同配置。
+     * 先应用 Boot 的连接/监听默认配置，再显式启用 MANUAL ACK、批监听和消费端聚合。
+     * <p>
+     * batchEnabled=false 时容器批大小为 1；开启时取 batchSize。prefetch 为 max(10, 配置 batchSize)，
+     * 即使批开关关闭也按此公式设置，预取不等于同事务处理条数。
+     * receiveTimeout 使用 batchWaitMillis，只是接收等待配置，不承诺端到端或批事务耗时不超过这个值。
      *
      * @param connection
      *                       RabbitMQ 连接工厂
      * @param configurer
-     *                       Spring Boot 默认监听配置
+     *                       Spring Boot 默认监听容器配置器
      * @param properties
      *                       投递和批处理配置
-     *
-     * @return 主队列监听器使用的容器工厂
+     * @return 名为 deliveryContainerFactory 的主队列监听工厂
      */
     @Bean
     public SimpleRabbitListenerContainerFactory deliveryContainerFactory(ConnectionFactory connection,

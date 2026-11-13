@@ -22,11 +22,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 主队列的消费者：反序列化并校验消息，再调用事务服务创建购买订单。
+ * 03 的消费执行者：校验 AMQP JSON，再经事务服务创建购买订单，最后处理该通道本次交付。
  * <p>
- * MQ 线程没有 HTTP 的 UserContext，用户身份来自消息并由账本守卫核对。
- * 订单服务经过 Spring 代理提交后才 ACK；提交后、ACK 前发生故障会重投，重复投递复用原订单。
- * 默认逐条处理，可配置小批次共用事务；这里不是付款或发券入口。
+ * 没有 HTTP 的 ThreadLocal 身份，用户和活动来自消息并由账本守卫核对。
+ * 默认逐条事务，可选有界批事务；事务提交后、ACK 前中断会导致重复交付，固定请求身份使其复用原订单。
+ * <p>
+ * 暂时性失败先安排 Outbox 重试，再 NACK 原消息且不原队列重排；业务拒绝和旧投递有各自确认分支。
+ * 消息确认不等于 Redis 预留已释放，也不是购买付款或发券。
+ *
+ * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.fulfillment.RequestLedger
+ * @see com.voucherx.fulfillment.DeliveryListenerConfig
  */
 @Component
 public class SeckillOrderConsumer {
@@ -63,18 +69,21 @@ public class SeckillOrderConsumer {
     }
 
     /**
-     * 校验 JSON、身份字段和单条大小，按数量及累计字节数拆成有界批次。
+     * 接收容器交付的列表，反序列化每条 JSON，要求请求/事件 ID 非 null、用户/活动 ID 为正且 epoch 至少为 1。
      * <p>
-     * 畸形或超大消息直接 NACK 且不原队列重排；有效消息交给 process。
-     * 主队列配置的死信绑定负责接收拒绝的投递。
-     *
-     * @throws IOException
-     *                         向 RabbitMQ 写 ACK/NACK 失败
+     * 本层检查不等于完整业务身份验证，具体模式、布局和账本身份稍后在订单事务核对。
+     * 畸形或单条消息体超过 batchBytes 时 NACK(false,false)，不调用订单服务。
+     * <p>
+     * 有效项按 batchSize 及总消息体字节数拆成有限列表，再交给 process。
+     * 单条大小检查发生在 JSON 解析之后；此上限约束业务分组，并不阻止容器先收取和解析大消息。
      *
      * @param deliveries
-     *                       容器本次交付的消息列表
+     *                       容器本次交付的 AMQP 消息
      * @param channel
-     *                       本次投递所属通道，ACK 标签只在该通道有意义
+     *                       原交付所属通道，其 deliveryTag 不能跨通道使用
+     * @throws IOException
+     *                         向原通道发送 ACK/NACK 失败
+     * @see #process
      */
     @RabbitListener(queues = RabbitMqConfig.MAIN_QUEUE, containerFactory = "deliveryContainerFactory")
     public void onMessages(List<Message> deliveries, Channel channel) throws IOException {
@@ -113,31 +122,33 @@ public class SeckillOrderConsumer {
     /**
      * 单条调用的适配入口，复用相同的校验和处理规则。
      *
-     * @throws IOException
-     *                         消息确认失败
-     *
      * @param message
      *                    AMQP 投递
      * @param channel
      *                    对应的 RabbitMQ 通道
+     * @throws IOException
+     *                         消息确认失败
      */
     public void onMessage(Message message, Channel channel) throws IOException {
         onMessages(List.of(message), channel);
     }
 
     /**
-     * 开启批处理且有多条消息时，先尝试一个数据库事务处理整个批次；代理正常返回后逐条确认。
+     * 默认直接逐条 one；开启批处理且有多条时，先调用 persistBatch 共用一个 MySQL 事务。
      * <p>
-     * 批次事务失败会整体回滚，此时尚未 ACK，再有界地逐条处理一次，隔离导致失败的消息。
-     * 默认未开启批处理时直接进入 one。
-     *
-     * @throws IOException
-     *                         消息确认失败
+     * 代理正常返回后才逐项记录新建/重复结果并调用 success；批次中途抛异常则先整体回滚，此时尚未 ACK，
+     * 随后只做一轮逐条降级，不无限递归拆分。逐条失败会按 one 的分类处理。
+     * <p>
+     * 提交后的故障点或 ACK 异常不会进入“批事务回滚后拆分”分支，已经提交的结果保留，未来重投复用订单。
+     * 批事务执行在途按一段计，结果耗时沿用批次起点，不是每单独立事务时间。
      *
      * @param batch
-     *                    已校验的有界消息批次
+     *                    已限制数量和消息体总字节数的有效消息列表
      * @param channel
-     *                    本次消费通道
+     *                    原交付通道
+     * @throws IOException
+     *                         逐项确认交付失败
+     * @see com.voucherx.order.service.OrderPersistenceService#persistBatch
      */
     private void process(List<Item> batch, Channel channel) throws IOException {
         if (config.batchEnabled() && batch.size() > 1) {
@@ -170,19 +181,25 @@ public class SeckillOrderConsumer {
     }
 
     /**
-     * 单条建单：调用 orders.persist，经事务代理提交后更新状态缓存并 ACK。
+     * 调用订单事务服务并按返回或异常分类；正常返回后才记录成功/重复、更新缓存及单条 ACK。
+     * <ul>
+     * <li>StaleDeliveryException：只 ACK 此投递，不关闭原请求或改缓存。</li>
+     * <li>OrderBusinessException：回滚后调用 ledger.fail 再核验；允许确认时写失败缓存并 ACK，否则
+     * NACK。</li>
+     * <li>其他异常：回滚后调用 ledger.defer 安排原事件重试，再 NACK(false,false) 原投递。</li>
+     * </ul>
      * <p>
-     * 旧代次投递直接 ACK；确定业务拒绝先由账本核验并关闭，允许时写失败缓存并 ACK。
-     * 其他异常通过账本安排 Outbox 重试，再 NACK 原投递且不原队列重排。
-     * 身份冲突不能关闭真实请求或覆盖其缓存；各数据库异常处理与已回滚的建单事务分开。
-     *
-     * @throws IOException
-     *                         消息确认失败
+     * fail/defer 自己抛异常时，执行不会继续到后面的确认语句；不能把未提交的重试意图当作已持久化。
+     * 正常事务已提交后执行的故障点、状态记录或 ACK 出错，也不回滚该购买单。
      *
      * @param item
-     *                    本次投递及其业务负载
+     *                    本次 AMQP 交付及业务负载
      * @param channel
-     *                    本次消费通道
+     *                    原交付通道
+     * @throws IOException
+     *                         发送确认失败
+     * @see com.voucherx.fulfillment.RequestLedger#fail
+     * @see com.voucherx.fulfillment.RequestLedger#defer
      */
     private void one(Item item, Channel channel) throws IOException {
         long started = metrics.begin();
@@ -220,17 +237,19 @@ public class SeckillOrderConsumer {
     }
 
     /**
-     * 事务已提交后尽力更新 Redis SUCCESS 缓存，再单条 ACK；Redis 数据访问异常被状态存储层记录，不回滚数据库。
-     *
-     * @throws IOException
-     *                         ACK 发送失败，消息可能重投
+     * 在数据库结果已提交后，尽力将 Redis 状态写 SUCCESS，再 basicAck(tag,false) 仅确认本次交付。
+     * <p>
+     * 状态存储层捕获常见 Redis 数据访问异常，缓存失败不撤销数据库结果。
+     * ACK 写出失败时数据库仍成功，未来重复交付由已有订单幂等处理；不使用 multiple=true 跨越其他未完成交付。
      *
      * @param item
-     *                    已成功处理的投递
+     *                    对应业务已经完成的交付
      * @param result
-     *                    已提交的新建或复用订单结果
+     *                    新建或复用的已提交购买订单结果
      * @param channel
-     *                    原投递所属通道
+     *                    该 deliveryTag 所属通道
+     * @throws IOException
+     *                         通道 ACK 失败
      */
     private void success(Item item, OrderPersistResult result, Channel channel) throws IOException {
         statuses.markSuccess(item.message().requestId(), item.message().messageId(), result.orderId());
@@ -242,7 +261,6 @@ public class SeckillOrderConsumer {
      *
      * @param m
      *              AMQP 投递信封
-     *
      * @return 通道内的 deliveryTag
      */
     private long tag(Message m) {

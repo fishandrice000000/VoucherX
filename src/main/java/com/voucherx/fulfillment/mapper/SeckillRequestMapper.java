@@ -16,7 +16,6 @@ public interface SeckillRequestMapper {
      *
      * @param id
      *               请求 ID
-     *
      * @return 请求快照；不存在为 null
      */
     RequestRecord find(@Param("id") String id);
@@ -28,7 +27,6 @@ public interface SeckillRequestMapper {
      *                   用户 ID
      * @param key
      *                   该用户的幂等键
-     *
      * @return 原请求；不存在为 null
      */
     RequestRecord byKey(@Param("userId") long userId, @Param("key") String key);
@@ -38,7 +36,6 @@ public interface SeckillRequestMapper {
      *
      * @param id
      *               请求 ID
-     *
      * @return 当前请求；不存在为 null
      */
     RequestRecord lock(@Param("id") String id);
@@ -66,7 +63,6 @@ public interface SeckillRequestMapper {
      *                    布局版本
      * @param now
      *                    当前 Unix 毫秒
-     *
      * @return 插入行数
      */
     int insertIntent(@Param("id") String id, @Param("eventId") String eventId, @Param("user") long user,
@@ -75,14 +71,17 @@ public interface SeckillRequestMapper {
             @Param("now") long now);
 
     /**
-     * 写为 ACCEPTED/RESERVED；SQL 本身不限制原阶段，RequestLedger 必须持锁确认仍为 INTENT。
+     * 写 ACCEPTED/RESERVED；SQL 的 WHERE 仅匹配请求 ID，阶段判断由 RequestLedger.accept
+     * 在持有请求行锁时完成。
+     * <p>
+     * 不能脱离服务层把此 Mapper 当成自带 INTENT 条件的状态机。
+     * 同事务中还必须插入 Outbox，避免只有受理事实却没有待发事件。
      *
      * @param id
-     *                请求 ID
+     *                已持锁且确认仍为 INTENT 的请求 ID
      * @param now
-     *                当前 Unix 毫秒
-     *
-     * @return 更新行数
+     *                更新 Unix 毫秒
+     * @return 实际更新行数
      */
     int accept(@Param("id") String id, @Param("now") long now);
 
@@ -95,7 +94,6 @@ public interface SeckillRequestMapper {
      *                    购买订单 ID
      * @param now
      *                    当前 Unix 毫秒
-     *
      * @return 更新行数；阶段不匹配时为 0
      */
     int succeed(@Param("id") String id, @Param("orderId") long orderId, @Param("now") long now);
@@ -109,7 +107,6 @@ public interface SeckillRequestMapper {
      *                   关闭或诊断原因
      * @param now
      *                   当前 Unix 毫秒
-     *
      * @return 更新行数
      */
     int rejectUnreserved(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
@@ -123,7 +120,6 @@ public interface SeckillRequestMapper {
      *                   关闭或诊断原因
      * @param now
      *                   当前 Unix 毫秒
-     *
      * @return 更新行数
      */
     int close(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
@@ -137,7 +133,6 @@ public interface SeckillRequestMapper {
      *                   关闭或诊断原因
      * @param now
      *                   当前 Unix 毫秒
-     *
      * @return 更新行数
      */
     int recordReason(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
@@ -147,7 +142,6 @@ public interface SeckillRequestMapper {
      *
      * @param voucherId
      *                      活动 ID
-     *
      * @return 有未结业务或预留证据的请求数
      */
     long countUnsettled(@Param("voucherId") long voucherId);
@@ -161,7 +155,6 @@ public interface SeckillRequestMapper {
      *                        只扫描更新时刻不晚于该 Unix 毫秒的请求
      * @param limit
      *                        本轮最多返回条数
-     *
      * @return 待核对请求 ID 列表
      */
     java.util.List<String> dueForCheck(@Param("now") long now, @Param("staleBefore") long staleBefore,
@@ -176,7 +169,6 @@ public interface SeckillRequestMapper {
      *                 下一次核对的 Unix 毫秒
      * @param now
      *                 当前 Unix 毫秒
-     *
      * @return 成功认领为 1，竞争未命中为 0
      */
     int claimCheck(@Param("id") String id, @Param("next") long next, @Param("now") long now);
@@ -188,7 +180,6 @@ public interface SeckillRequestMapper {
      *                请求 ID
      * @param now
      *                当前 Unix 毫秒
-     *
      * @return 更新行数
      */
     int markReleased(@Param("id") String id, @Param("now") long now);

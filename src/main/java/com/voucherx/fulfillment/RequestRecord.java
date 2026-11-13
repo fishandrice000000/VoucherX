@@ -21,7 +21,7 @@ import com.voucherx.seckill.model.SeckillOrderMessage;
  * @param reservation
  *                          UNKNOWN、RESERVED、NONE 或 RELEASED 等预留状态
  * @param epoch
- *                          创建意图时的活动恢复代次
+ *                          请求当前绑定的恢复代次；初次取自意图创建时，受控恢复可更新
  * @param stockMode
  *                          SINGLE 或 BUCKET
  * @param startBucketNo
@@ -50,9 +50,14 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
     }
 
     /**
-     * 从持久化身份和布局构造 MQ 消息；重发保持同一 requestId 与 eventId，避免创建新的业务请求。
+     * 从数据库账本快照构造订单消息，把 eventId 映射为负载中的 messageId。
+     * <p>
+     * 例如 R1/E1 每次重发都保持这两个业务 ID、用户和布局身份；新的只是发送尝试 CorrelationData。
+     * createdAt 来自意图创建时刻，不是本次重发时刻。构造对象不等于已发布，也不会推进请求阶段。
      *
-     * @return 供消息发布器序列化的订单消息
+     * @return 等待发布器序列化为 JSON 的订单消息
+     * @see com.voucherx.seckill.model.SeckillOrderMessage
+     * @see com.voucherx.mq.publisher.SeckillMessagePublisher#publish
      */
     public SeckillOrderMessage message() {
         return new SeckillOrderMessage(eventId, requestId, userId,
@@ -60,12 +65,14 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
     }
 
     /**
-     * 逐项比对业务身份、恢复代次及布局，防止伪造或过期投递作用到其他请求。
+     * 比较请求、事件、用户、活动、代次、模式、计划起始桶和布局版本，供建单、关闭与重试路径核对身份。
+     * <p>
+     * 不比较 createdAt；重发身份不能用 CorrelationData 或通道 deliveryTag 代替。
+     * 此比较本身不加锁，也不判断活动 NORMAL 或请求可执行阶段，守卫在调用前后完成这些检查。
      *
      * @param m
-     *              待校验的非空业务消息
-     *
-     * @return 所有要求的字段一致时为 true
+     *              必需身份已通过入口检查的非空消息
+     * @return 上述持久化身份字段全部一致时为 true
      */
     public boolean matches(SeckillOrderMessage m) {
         return requestId.equals(m.requestId()) && eventId.equals(m.messageId()) && userId == m.userId()

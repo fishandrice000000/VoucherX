@@ -12,10 +12,14 @@ import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
 
 /**
- * 入门指南的真实组件对照测试：手动触发 Outbox，通过 RabbitMQ 消费完成建单，再观察交易状态。
+ * 共享真实组件回归：03 从受理与投递开始，04 继续付款用券，05/06 覆盖关闭补偿和受控恢复。
  * <p>
- * 使用隔离的 MySQL、Redis 和 RabbitMQ；关闭自动投递以便明确控制发送时刻，显式开启模拟支付。
- * 阅读正常业务主线从 {@link #realPurchaseIssueCancelRelockAndRedeem()} 开始。
+ * 真实 MySQL、Redis、RabbitMQ 来自隔离容器；关闭自动 Outbox 投递，正常消息流程由用例显式 dispatch 接续。
+ * 03 先读 realComponentsDeliverAcceptedRequestAndReplayIdempotently；买券到核销再读
+ * realPurchaseIssueCancelRelockAndRedeem。
+ *
+ * @see #realComponentsDeliverAcceptedRequestAndReplayIdempotently()
+ * @see #realPurchaseIssueCancelRelockAndRedeem()
  */
 @TestPropertySource(properties = { "voucherx.delivery.enabled=false", "voucherx.commerce.simulation-enabled=true",
         "voucherx.fault.enabled=true" })
@@ -41,14 +45,19 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     @Autowired
     com.voucherx.recovery.FaultInjector faults;
 
+    /**
+     * 每个用例结束清除故障注入状态，避免一个用例布置的触发点影响后续业务流。
+     */
     @org.junit.jupiter.api.AfterEach
     void clearFaults() {
         faults.clear();
     }
 
     /**
-     * 验证“受理不等于建单”：受理后为 ACCEPTED，手动投递并等待消费后才为 SUCCEEDED。
-     * 同用户同幂等键重试复用 requestId，数据库只创建一单、扣一份库存。
+     * 用户/活动均为 1、库存 10，先抢券并确认请求是 ACCEPTED，此时尚未手动投递。
+     * <p>
+     * 调用真实 dispatch 后等待 MQ 消费将请求改为 SUCCEEDED，再复用 smoke-1 幂等键找回同一 requestId。
+     * 最终数据库一笔购买单、库存 9；把“可靠受理”“发布”和“事务建单”三个阶段逐步连起来观察。
      */
     @Test
     void realComponentsDeliverAcceptedRequestAndReplayIdempotently() {
@@ -108,6 +117,11 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isInstanceOf(com.voucherx.common.exception.BusinessException.class);
     }
 
+    /**
+     * 受理后先提交关闭和补偿意图，再执行两次补偿，Redis 库存应只返还一次到 10。
+     * <p>
+     * 随后尝试迟到的原消息不能建单，说明业务关闭屏障不同于停止某一次投递；补偿实现沿 05 阅读。
+     */
     @Test
     void durableClosureAndRepeatedCompensationReturnStockOnce() {
         createUser(1);
@@ -127,6 +141,12 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isEqualTo(com.voucherx.reconcile.ReconcileDecision.WAIT);
     }
 
+    /**
+     * 受理请求后冻结活动并删除其 Redis 证据，受控恢复仍需保留该请求占用，Redis 可用为 9。
+     * <p>
+     * 旧代次消息不能建单，也不能把当前请求改为失败；手动投递恢复后的原请求，最终正常建单且 MySQL 库存 9。
+     * 这是 06 的恢复分支，与普通租约重试是不同机制。
+     */
     @Test
     void rebuildPreservesAcceptedRequestAndRejectsOldEpoch() {
         createUser(1);
@@ -153,6 +173,9 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isEqualTo(9);
     }
 
+    /**
+     * 在恢复发布 Redis 状态后注入中断，活动停在 RECONCILING；再次恢复回到 NORMAL，库存仍为 10，验证恢复重入不重复加量。
+     */
     @Test
     void interruptedPublicationResumesWithoutAddingStockAgain() {
         createActivity(1, 10, 10, LocalDateTime.now().minusMinutes(1), LocalDateTime.now().plusMinutes(5));
@@ -168,6 +191,14 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isEqualTo("10");
     }
 
+    /**
+     * 启动独立维护 CLI 子进程诊断一个已受理请求，验证正常退出、输出 WAIT 且原请求仍为 ACCEPTED，未写修复审计。
+     * <p>
+     * 仅在隔离组件环境验证诊断子命令；不是执行生产修复，也不是新的消息投递流程。
+     *
+     * @throws Exception
+     *                       子进程启动、等待或临时输出文件操作失败
+     */
     @Test
     void maintenanceCliReadsStateAndExitsWithoutMutatingIt() throws Exception {
         createUser(1);

@@ -6,21 +6,33 @@ package com.voucherx.mq.publisher;
  * 发布失败分类不能单独授权回补库存；释放还须满足持久化关闭和归属核验。
  */
 public enum PublishResult {
-    /** Broker 确认接收且消息成功路由到队列。 */
+    /**
+     * 本次 Confirm 为 ACK 且未观察到不可路由退回，发送器可尝试记 SENT；不是消费者 ACK 或订单成功。
+     */
     CONFIRMED,
-    /** Broker 确认接收，但 mandatory 消息无法路由。消息不会进入队列。 */
+    /**
+     * 本次消息被 mandatory 路由检查退回，不能据此撤销已有受理或直接返库存。
+     */
     RETURNED,
-    /** Broker 明确 NACK。 */
+    /**
+     * Broker 对本次发布明确 NACK；发送器仍按持久化事件安排重试或隔离。
+     */
     NACKED,
-    /** 连接阶段即失败，可以确定消息未发送。 */
+    /**
+     * 发布器捕获连接阶段失败，将该次发布分类为未发送；原业务请求仍保留。
+     */
     NOT_SENT,
-    /** 确认超时、连接中断等，消息是否进入队列无法确定。 */
+    /**
+     * 等待确认超时、中断或某些发送异常，无法确定本次消息是否入队，重试可能产生重复交付。
+     */
     UNKNOWN;
 
     /**
-     * 判断本次发布结果是否归类为明确未成功入队；即使返回 true，仍不能代替数据库关闭屏障直接释放预留。
+     * 保留的发布结果分类辅助方法，把 RETURNED/NACKED/NOT_SENT 归为明确未成功入队一类。
+     * <p>
+     * 当前 Outbox 主线按 CONFIRMED 与其他结果分支，不使用本方法决定补偿；即使返回 true，也不能替代数据库关闭屏障释放预留。
      *
-     * @return RETURNED、NACKED 或 NOT_SENT 时为 true
+     * @return RETURNED、NACKED、NOT_SENT 时为 true
      */
     public boolean definitelyNotQueued() {
         return this == RETURNED || this == NACKED || this == NOT_SENT;

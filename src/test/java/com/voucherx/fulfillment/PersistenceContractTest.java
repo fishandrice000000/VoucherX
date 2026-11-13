@@ -51,6 +51,9 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     @Autowired
     ObjectMapper json;
 
+    /**
+     * 每个持久化契约用例结束后清除注入故障，隔离后续事务断言。
+     */
     @AfterEach
     void clearFaults() {
         faults.clear();
@@ -159,7 +162,12 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_coupon_action", Integer.class)).isZero();
     }
 
-    /** 事件租约过期被新令牌接管后，旧令牌不能回写 SENT，新持有者才有回写资格。 */
+    /**
+     * 先用 old 令牌认领事件，租约未到时 new 更新 0 行；用模拟传入的到期时刻后，new 接手成功。
+     * <p>
+     * old 再写 SENT 应更新 0 行，new 则更新 1 行；真实验证 SQL 的令牌条件，不需要等待真实租约时长。
+     * 本用例不向 RabbitMQ 发送消息，因此证明的是旧认领者不能覆盖新结果，而不是网络层绝不会重复发送。
+     */
     @Test
     void expiredOutboxLeaseCannotBeCompletedByPreviousClaimant() {
         var request = accepted();

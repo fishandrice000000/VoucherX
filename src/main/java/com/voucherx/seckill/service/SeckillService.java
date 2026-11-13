@@ -146,12 +146,15 @@ public class SeckillService {
     }
 
     /**
-     * 复用已有请求，不再次预扣 Redis；同一幂等键绑定其他活动时拒绝。
+     * 返回同用户同幂等键原请求的 ID 和当前阶段映射，不重新创建意图或预留。
+     * <p>
+     * 请求已绑定其他活动时抛 409 冲突；稳定键要由客户端在同一次业务重试中保持一致。
+     * 这是业务幂等，不表示跳过 Controller 之前的认证和本地准入。
      *
      * @param r
-     *                    按用户及幂等键找到的原流水
+     *                    根据 (user_id, client_key) 找到的原流水
      * @param voucher
-     *                    本次请求的活动 ID
+     *                    本次希望抢的活动 ID
      * @return 原请求 ID 及当前业务状态
      */
     private SeckillAcceptResponse replay(RequestRecord r, long voucher) {
@@ -177,15 +180,17 @@ public class SeckillService {
     }
 
     /**
-     * 先读取 MySQL 流水并验证用户归属；只有没有流水时，才兼容查询历史购买订单。
+     * 先读 MySQL 请求账本并验证用户所有权，按业务阶段给出建单进度；无新账本时才兼容读取历史订单。
      * <p>
-     * 该接口不以 Redis 状态缓存作为最终事实；SUCCESS 返回的 orderId 还需要进入购买付款流程。
+     * INTENT→UNKNOWN、ACCEPTED→PROCESSING、CLOSED→FAILED、SUCCEEDED→SUCCESS。
+     * 不根据 Outbox 的 SENT 或 QUARANTINED 推断终态，也不以 Redis 缓存作为最终事实。
+     * SUCCESS 的 orderId 是购买单，付款和发券仍是后续流程。
      *
      * @param user
      *                 当前登录用户 ID
      * @param id
-     *                 客户端保存的 requestId
-     * @return 请求状态、可选购买订单 ID、事件 ID 及原因
+     *                 客户端保存的真实 requestId
+     * @return 带可选 orderId、固定事件 ID 和诊断原因的请求状态
      */
     public SeckillRequestStatusResponse queryRequest(Long user, String id) {
         RequestRecord r = ledger.find(id);

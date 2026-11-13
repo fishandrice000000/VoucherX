@@ -115,6 +115,23 @@ public abstract class AbstractIntegrationTest {
                 userId, String.format("138%08d", userId), "测试用户" + userId);
     }
 
+    /**
+     * 只在隔离测试数据库中准备 SINGLE 活动及券模板，版本 1、桶数 1。
+     * <p>
+     * 券模板买价 100 分、面额 1000 分；当前库存可小于总库存以构造已消耗场景。
+     * 本方法不初始化 Redis，不是生产商家创建活动接口。
+     *
+     * @param voucherId
+     *                       模板及活动共用的 ID
+     * @param totalStock
+     *                       初始总量
+     * @param stock
+     *                       当前 MySQL 单库存余额
+     * @param begin
+     *                       活动开始本地日期时间
+     * @param end
+     *                       活动结束本地日期时间
+     */
     protected void createActivity(long voucherId, int totalStock, int stock,
             java.time.LocalDateTime begin, java.time.LocalDateTime end) {
         jdbcTemplate.update("""
@@ -133,8 +150,23 @@ public abstract class AbstractIntegrationTest {
     }
 
     /**
-     * 创建 MySQL BUCKET 活动，按固定规则拆分总额度。Redis 仍使用单库存 Key，
-     * 由测试显式初始化；本辅助方法不写入 Redis。
+     * 在隔离测试数据库创建 BUCKET 活动和版本 1 的连续桶布局，不写 Redis。
+     * <p>
+     * 先按 totalStock/bucketCount 平分，再把余数依次分给较小桶号；总量 5、8 桶时得到 1/1/1/1/1/0/0/0。
+     * 每桶初始量和剩余量相等，合计保持活动总量，活动表 stock 固定 0，因为权威余量在桶表。
+     * <p>
+     * 这是测试数据准备规则，不是生产自动分桶服务；测试随后显式初始化 Redis 或调用安全初始化器。
+     *
+     * @param voucherId
+     *                        模板及活动共用的 ID
+     * @param totalStock
+     *                        要分配的总库存
+     * @param bucketCount
+     *                        桶数量，调用者提供正数
+     * @param begin
+     *                        活动开始本地日期时间
+     * @param end
+     *                        活动结束本地日期时间
      */
     protected void createBucketActivity(long voucherId, int totalStock, int bucketCount,
             java.time.LocalDateTime begin, java.time.LocalDateTime end) {

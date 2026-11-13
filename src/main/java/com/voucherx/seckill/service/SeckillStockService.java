@@ -58,7 +58,6 @@ public class SeckillStockService {
      *                          计划起始桶
      * @param layoutVersion
      *                          本次请求绑定的库存布局版本
-     *
      * @return Lua 返回值：非负表示成功；负数表示明确拒绝
      */
     public long reserve(Long voucherId, Long userId, String requestId,
@@ -69,12 +68,26 @@ public class SeckillStockService {
     }
 
     /**
-     * 把五组 Redis 键和请求身份交给 Lua，同时校验时间、资格、库存及活动门禁。
+     * 把 Redis 操作位置放入 KEYS，把请求身份和业务条件按顺序放入 ARGV，执行一次预留脚本。
      * <p>
-     * 非负数为预扣后的剩余库存，0 也代表抢到最后一张；负数含义以脚本为准，
-     * 包括 -1 未初始化、-2 未开始、-3 已结束、-4 用户重复、-5 售罄、-6 门禁状态或代次不匹配。
-     * 同一请求已拥有预留时，脚本直接返回当前余量，不再扣减。
-     * 连接异常或空返回会抛业务异常，调用者须把结果视为可能未知，不能盲目释放。
+     * 五个键的顺序不能交换：
+     * <ol>
+     * <li>stock：活动总库存字符串，两种 MySQL 库存模式都共用它。</li>
+     * <li>users：已占资格的用户 Set。</li>
+     * <li>request：本次请求 Hash，写入身份、PENDING、布局和代次。</li>
+     * <li>owners：userId 到 requestId 的归属 Hash。</li>
+     * <li>gate：活动门禁 state/epoch。</li>
+     * </ol>
+     * <p>
+     * ARGV[1..10] 依次是 userId、requestId、nowMillis、beginMillis、endMillis、voucherId、
+     * stockMode、startBucketNo、layoutVersion、epoch。Java 转字符串传输，Lua 按需 tonumber。
+     * <p>
+     * 脚本先检查门禁，再识别同请求重放，再检查库存键、时间、资格及库存。
+     * 通过后原子 DECR、SADD、写归属和请求状态，并 PERSIST 活跃请求；不会替 MySQL 提交事务。
+     * 同一请求已拥有预留时只返回当前余量，不再扣减；Redis 不在这里选择实际 MySQL 扣减桶。
+     * <p>
+     * 非负结果为成功，0 代表余量恰好为零；负数为 -1 库存不可用、-2 未开始、-3 已结束、
+     * -4 重复用户、-5 售罄、-6 门禁或代次不符。连接异常或空返回抛业务异常，调用者须按结果可能未知处理。
      *
      * @param voucherId
      *                          活动 ID
@@ -91,13 +104,14 @@ public class SeckillStockService {
      * @param stockMode
      *                          SINGLE 或 BUCKET
      * @param startBucketNo
-     *                          计划起始桶
+     *                          计划起始 MySQL 桶号；只是随请求记录，不用于 Redis 分桶
      * @param layoutVersion
-     *                          本次请求绑定的库存布局版本
+     *                          绑定的库存布局版本
      * @param epoch
-     *                          意图中绑定的恢复代次，防止旧请求在恢复后继续预留
-     *
-     * @return 预扣后的剩余库存或明确的负数拒绝码
+     *                          意图中的活动恢复代次
+     * @return 预扣后的或同请求重放时观察到的当前余量；负数为明确拒绝码
+     * @see RedisKeys
+     * @see com.voucherx.config.RedisScriptConfig#seckillReserveScript()
      */
     public long reserve(Long voucherId, Long userId, String requestId,
             long nowMillis, long beginMillis, long endMillis,
@@ -138,7 +152,6 @@ public class SeckillStockService {
      *                      原预留请求 ID
      * @param reason
      *                      释放原因
-     *
      * @return 脚本完成释放或确认已释放时为 true
      */
     public boolean release(Long voucherId, Long userId, String requestId, String reason) {
@@ -162,7 +175,6 @@ public class SeckillStockService {
      *                      释放原因
      * @param epoch
      *                      原预留所属的恢复代次
-     *
      * @return 已释放时为 true；归属/门禁不满足或 Redis 异常时为 false
      */
     public boolean release(Long voucherId, Long userId, String requestId, String reason, long epoch) {
@@ -190,7 +202,6 @@ public class SeckillStockService {
      *                      活动 ID
      * @param stock
      *                      已经核验可初始化的库存数量
-     *
      * @return 本次成功创建键时为 true；键已存在或操作失败时为 false
      */
     public boolean initializeIfAbsent(Long voucherId, int stock) {
@@ -209,7 +220,6 @@ public class SeckillStockService {
      *
      * @param voucherId
      *                      活动 ID
-     *
      * @return 观察到库存键存在时为 true
      */
     public boolean exists(Long voucherId) {
@@ -225,7 +235,6 @@ public class SeckillStockService {
      *
      * @param voucherId
      *                      活动 ID
-     *
      * @return 剩余库存；键缺失时为 {@code null}
      */
     public Long stock(Long voucherId) {

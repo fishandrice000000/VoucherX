@@ -58,7 +58,6 @@ public class OrderPersistenceService {
      *
      * @param message
      *                    经解析且将与账本进一步核对的订单消息
-     *
      * @return 订单 ID 及是否本次新建；经事务代理正常返回时事务已提交
      */
     @Transactional(rollbackFor = Exception.class)
@@ -121,7 +120,6 @@ public class OrderPersistenceService {
      *
      * @param messages
      *                     消费者已限制数量和总字节数的非空批次
-     *
      * @return 与输入顺序一致的订单结果列表
      */
     @Transactional(rollbackFor = Exception.class)
@@ -134,14 +132,19 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 通过 stock 大于 0 的条件更新扣减一份 MySQL 单库存；受影响行数为 0 则报售罄。
+     * 在建单事务中用 stock 大于 0 的条件 SQL 扣一份 SINGLE 库存；更新行数为 0 则抛 SOLD_OUT。
+     * <p>
+     * 即使多个线程曾读到 stock=1，真正 UPDATE 仍以执行时的条件竞争，不会把该行扣为负数。
+     * 插单及后续步骤失败会让本次 MySQL 扣减回滚；它不会顺带返还已预留的 Redis 额度。
      *
      * @param message
      *                     用于定位活动的业务消息
      * @param activity
-     *                     已读取的活动配置
-     *
-     * @return SINGLE 模式记录的桶号 0
+     *                     已读取的活动配置；本方法实际只使用消息中的活动 ID
+     * @return SINGLE 订单记录的桶号 0
+     * @throws OrderBusinessException
+     *                                    没有扣到库存
+     * @see SeckillVoucherMapper#deductStock(Long)
      */
     private Integer deductSingleStock(SeckillOrderMessage message, SeckillVoucher activity) {
         int changed = seckillVoucherMapper.deductStock(message.voucherId());
@@ -152,18 +155,34 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 先验证桶布局完整，再从消息起始桶循环尝试配置允许的有限个桶，返回实际扣减成功的桶。
+     * 在调用者的建单事务内，从计划起点开始有界尝试 MySQL 库存桶。
+     * <ol>
+     * <li>要求桶数量为正，聚合统计结合主键约束确认编号覆盖 0 到 bucketCount-1。</li>
+     * <li>优先取消息起点；为空时按用户取模，再检查起点范围。</li>
+     * <li>尝试次数为 min(max(1, bucketAttempts), bucketCount)，默认最多 3 个候选。</li>
+     * <li>第 i 次访问 (startBucket+i)%bucketCount；只在剩余量大于 0、布局匹配时扣 1，命中立即返回。</li>
+     * </ol>
      * <p>
-     * 尝试耗尽后汇总剩余库存：总量为 0 是 SOLD_OUT，其他桶还有库存则是 LOCAL_SOLD_OUT。
+     * 例如用户 1001、4 桶，起点 1 已空而桶 2 有 25 份：桶 1 更新 0 行，桶 2 更新 1 行并剩 24，
+     * 返回 2。订单 bucket_no 保存 2，消息 startBucketNo 仍为 1；二者不能混为同一个字段。
+     * <p>
+     * 候选全部失败后才汇总余额：观察到总量 0 抛 SOLD_OUT，仍有余额抛 LOCAL_SOLD_OUT。
+     * 例如 8 桶、起点 5、最多 3 次，只查 5/6/7，即使桶 0 有额度也不会继续无界搜索。
+     * 该汇总用于本次分支判断，不是冻结所有桶后取得的全局不变快照。
+     * <p>
+     * 成功扣桶仍需与插单、权益快照和请求成功状态一起提交；后续异常会回滚此扣减，Redis 预留另按补偿协议处理。
      *
      * @param message
-     *                          包含计划起始桶的消息
+     *                          含用户、活动和计划起始桶的消息
      * @param activity
-     *                          提供桶数量的活动配置
+     *                          提供当前桶数量的活动配置
      * @param layoutVersion
-     *                          已核验的布局版本
-     *
-     * @return 实际成功扣减的桶号，可能不同于计划起始桶
+     *                          已核验的活动布局版本
+     * @return 实际扣减成功的桶号，用于保存订单实际扣减位置
+     * @throws OrderBusinessException
+     *                                    布局不合法、全部售罄或本次候选局部售罄
+     * @see com.voucherx.voucher.model.BucketLayoutStats#covers(int)
+     * @see SeckillVoucherBucketMapper#deductBucket
      */
     private Integer deductBucket(SeckillOrderMessage message, SeckillVoucher activity,
             int layoutVersion) {
@@ -203,14 +222,22 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 核验消息库存模式及布局版本；SINGLE 兼容缺少布局的旧消息，BUCKET 必须显式匹配。
+     * 核对消息库存模式和布局是否可用于当前活动；不扣减库存。
+     * <p>
+     * SINGLE 在本层允许缺失/空白模式以及 null/0 版本，显式值则必须匹配。
+     * BUCKET 必须明确声明 BUCKET 且版本一致，不能把旧单库存消息解释为桶请求。
+     * <p>
+     * 这些是本方法的局部兼容规则；正常 persist 还会先经过账本守卫逐项比较消息身份和布局。
+     * 桶编号范围及完整覆盖另在 deductBucket 中检查。
      *
      * @param message
-     *                          消息中的模式及布局信息
+     *                          待验证的业务消息
      * @param activityMode
-     *                          数据库当前活动模式
+     *                          从数据库解析出的当前模式
      * @param layoutVersion
      *                          数据库当前布局版本
+     * @throws OrderBusinessException
+     *                                    模式或布局版本不匹配
      */
     private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode,
             int layoutVersion) {

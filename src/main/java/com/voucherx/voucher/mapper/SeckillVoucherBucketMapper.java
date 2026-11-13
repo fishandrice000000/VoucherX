@@ -8,22 +8,31 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
- * BUCKET 库存分支的 SQL；入门默认 SINGLE 可先跳过，切换桶模式时与建单和初始化器对照。
+ * BUCKET 分支的最终扣减及聚合 SQL；SINGLE 不访问这些桶库存行。
+ * <p>
+ * Redis 只做活动级总额度预留，本接口在 MySQL 事务中确定实际扣减桶。
+ * 桶号在同一活动下由主键保证唯一，布局版本与正库存是每次扣减必须同时匹配的条件。
+ *
+ * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.seckill.service.SeckillStockInitializer
+ * @see BucketLayoutStats
  */
 @Mapper
 public interface SeckillVoucherBucketMapper {
 
     /**
-     * 仅对指定活动、桶及布局版本且剩余库存大于 0 的一行扣减，参与建单事务。
+     * 条件扣减指定活动、桶号和布局版本的一份余额，仅 remaining_stock 大于 0 才更新。
+     * <p>
+     * 方法不自动换桶；返回 0 后是否继续尝试由订单服务决定。调用方需已有建单事务，
+     * 成功取得的库存行锁持续到事务结束，插单失败时本条更新也回滚。
      *
      * @param voucherId
      *                          活动 ID
      * @param bucketNo
-     *                          要尝试的桶编号
+     *                          本次尝试的实际候选桶编号
      * @param layoutVersion
-     *                          库存布局版本
-     *
-     * @return 成功为 1；桶缺失或无库存为 0
+     *                          本请求要求的布局版本
+     * @return 成功扣减为 1；桶缺失、版本不符或库存不足为 0
      */
     @Update("""
             UPDATE tb_seckill_voucher_bucket
@@ -38,14 +47,16 @@ public interface SeckillVoucherBucketMapper {
             @Param("layoutVersion") Integer layoutVersion);
 
     /**
-     * 汇总桶数量及编号范围，供调用方确认是否连续覆盖所需布局。
+     * 只统计指定活动及布局版本的行数、最小和最大桶号，不读取各桶余额。
+     * <p>
+     * 把结果交给 covers；结合表主键的桶号唯一约束，可排除“4 行但编号为 0/1/2/99”这类假完整布局。
      *
      * @param voucherId
      *                          活动 ID
      * @param layoutVersion
-     *                          库存布局版本
-     *
-     * @return 桶数量和最小/最大编号统计
+     *                          要核对的布局版本
+     * @return 聚合统计；无桶时计数为 0，最小/最大编号为空
+     * @see BucketLayoutStats#covers(int)
      */
     @Select("""
             SELECT COUNT(*) AS bucket_count,
@@ -64,7 +75,6 @@ public interface SeckillVoucherBucketMapper {
      *                          活动 ID
      * @param layoutVersion
      *                          库存布局版本
-     *
      * @return 桶行数
      */
     @Select("""
@@ -81,7 +91,6 @@ public interface SeckillVoucherBucketMapper {
      *                          活动 ID
      * @param layoutVersion
      *                          库存布局版本
-     *
      * @return 剩余库存总量
      */
     @Select("""
@@ -98,7 +107,6 @@ public interface SeckillVoucherBucketMapper {
      *                          活动 ID
      * @param layoutVersion
      *                          库存布局版本
-     *
      * @return 初始库存总量
      */
     @Select("""

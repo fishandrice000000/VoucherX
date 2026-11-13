@@ -55,7 +55,6 @@ public class SeckillService {
      *                    已认证用户 ID
      * @param voucher
      *                    活动 ID
-     *
      * @return 请求 ID 及当前处理状态
      */
     public SeckillAcceptResponse seckill(Long user, Long voucher) {
@@ -63,22 +62,28 @@ public class SeckillService {
     }
 
     /**
-     * 执行一次抢券编排，先处理幂等键重放，再校验活动时间、库存布局并进行全局准入。
+     * 执行抢券编排：幂等重放 → 活动校验 → 全局准入 → 持久化意图 → Redis 预留 → 可靠受理。
      * <p>
-     * 通过校验后，intent 先提交 INTENT/UNKNOWN 流水，再调用 Redis Lua。
-     * 明确的负数返回会关闭未预留意图并抛业务错误；Redis 调用结果不确定时保留意图并返回 UNKNOWN，
-     * 不能据此盲目释放库存。非负返回（包括剩余库存 0）表示预留成功，随后 accept 原子提交受理和待发事件。
+     * SINGLE 的起始桶固定为 0；BUCKET 使用 floorMod(user, bucketCount)，例如用户 1001、4 桶得到 1。
+     * 此时只决定候选起点，不访问任何 MySQL 桶库存；实际扣减桶稍后由订单事务决定。
      * <p>
-     * accept 经事务代理完成提交后，本方法返回 PROCESSING；此时已持久化 ACCEPTED 和 Outbox，订单仍由消费者异步创建。
+     * intent 先提交 INTENT/UNKNOWN，再向 Lua 传用户、活动、请求、当前/起止毫秒时间、模式、起始桶、布局和代次。
+     * 明确负数结果关闭未预留意图并抛业务错误；Redis 调用异常保留意图并返回 UNKNOWN，不能凭异常释放。
+     * 非负结果（包括 0）表示预留成功，此时 MySQL 库存还没扣。
+     * <p>
+     * accept 经事务代理提交 ACCEPTED 和 Outbox 后，本方法返回 PROCESSING，后台再异步建单。
+     * 前置校验拒绝不新增意图，同用户同幂等键重放复用原请求，不再次预扣。
      *
      * @param user
-     *                      已认证用户 ID；不是客户端任意指定的身份
+     *                      已认证用户 ID
      * @param voucher
-     *                      URL 指定的活动 ID
+     *                      活动 ID
      * @param clientKey
      *                      可选客户端幂等键；同一用户下唯一并绑定活动
-     *
      * @return 新请求的 PROCESSING/UNKNOWN，或同键原请求的当前状态
+     * @see com.voucherx.seckill.service.SeckillStockService#reserve(Long, Long,
+     *      String, long, long, long, String, int, int, long)
+     * @see com.voucherx.order.service.OrderPersistenceService#persist
      */
     public SeckillAcceptResponse seckill(Long user, Long voucher, String clientKey) {
         if (clientKey != null && !clientKey.matches("[A-Za-z0-9._:-]{1,64}"))
@@ -147,7 +152,6 @@ public class SeckillService {
      *                    按用户及幂等键找到的原流水
      * @param voucher
      *                    本次请求的活动 ID
-     *
      * @return 原请求 ID 及当前业务状态
      */
     private SeckillAcceptResponse replay(RequestRecord r, long voucher) {
@@ -161,7 +165,6 @@ public class SeckillService {
      *
      * @param r
      *              持久化请求流水
-     *
      * @return SUCCEEDED→SUCCESS，CLOSED→FAILED，ACCEPTED→PROCESSING，其余→UNKNOWN
      */
     private SeckillRequestStatus status(RequestRecord r) {
@@ -182,7 +185,6 @@ public class SeckillService {
      *                 当前登录用户 ID
      * @param id
      *                 客户端保存的 requestId
-     *
      * @return 请求状态、可选购买订单 ID、事件 ID 及原因
      */
     public SeckillRequestStatusResponse queryRequest(Long user, String id) {

@@ -73,7 +73,6 @@ public class SeckillStockInitializer implements ApplicationRunner {
      *
      * @param voucherId
      *                      活动 ID
-     *
      * @return Redis 已存在或本次成功初始化为 true；活动不存在、条件不满足或写入失败为 false
      */
     public boolean initializeSafely(Long voucherId) {
@@ -85,16 +84,20 @@ public class SeckillStockInitializer implements ApplicationRunner {
     }
 
     /**
-     * 先保证活动控制行存在；Redis 库存已存在就直接保留。
+     * 只为可确认未消费的活动补建缺失的 Redis 总库存，不负责创建 MySQL 桶布局。
      * <p>
-     * 库存缺失时，必须没有未结请求、没有非正常控制状态、没有历史订单。
-     * SINGLE 还要求当前库存等于总库存；BUCKET 要求桶连续覆盖且总量、剩余量均等于初始总量。
-     * 不能证明是未消费初始状态时拒绝自动重建，交给专门恢复流程处理。
+     * 先保证控制行存在；Redis 键存在则直接保留。缺失时拒绝有未结请求、非 NORMAL 控制状态或历史订单的活动。
+     * SINGLE 要求当前 stock 等于 total_stock；BUCKET 要求正桶数、连续覆盖，且桶初始量合计、剩余量合计都等于活动总量。
+     * BUCKET 使用桶汇总作为初始额度，不能拿活动表的 stock 充当权威桶余量。
+     * <p>
+     * 最后通过 SET NX 创建键，避免覆盖并发已写入的值；检查历史与写 Redis 不是一个跨存储原子事务。
+     * 这不是已有业务的在线重建入口；不能证明初始状态时返回 false，需另走受控恢复。
      *
      * @param activity
      *                     从 MySQL 读取的活动配置
-     *
-     * @return 可以保留现有库存或安全创建 Redis 库存时为 true
+     * @return 已观察到 Redis 键存在，或本次安全初始化写入成功时为 true；条件不满足或 SET NX 未写入为 false
+     * @see com.voucherx.voucher.model.BucketLayoutStats#covers(int)
+     * @see SeckillStockService#initializeIfAbsent(Long, int)
      */
     private boolean initializeIfSafe(SeckillVoucher activity) {
         Long voucherId = activity.getVoucherId();

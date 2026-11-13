@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
-@org.springframework.test.context.TestPropertySource(properties="voucherx.fault.enabled=true")
+@org.springframework.test.context.TestPropertySource(properties = "voucherx.fault.enabled=true")
 class SeckillIntegrationTest extends AbstractIntegrationTest {
 
     private static final long VOUCHER_ID = 2001L;
@@ -68,11 +68,19 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private OrderPersistenceService orderPersistenceService;
 
-    @Autowired private com.voucherx.fulfillment.RequestLedger ledger;
-    @Autowired private com.voucherx.fulfillment.OutboxDispatcher dispatcher;
-    @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
-    @Autowired private com.voucherx.recovery.FaultInjector faults;
-    @org.junit.jupiter.api.AfterEach void clearFaults() { faults.clear(); }
+    @Autowired
+    private com.voucherx.fulfillment.RequestLedger ledger;
+    @Autowired
+    private com.voucherx.fulfillment.OutboxDispatcher dispatcher;
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Autowired
+    private com.voucherx.recovery.FaultInjector faults;
+
+    @org.junit.jupiter.api.AfterEach
+    void clearFaults() {
+        faults.clear();
+    }
 
     @Test
     void activityNotStartedIsRejectedBeforeStockReservation() {
@@ -145,8 +153,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID);
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
-            SeckillRequestStatusResponse status =
-                    seckillService.queryRequest(1L, accepted.requestId());
+            SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
             assertThat(status.status()).isEqualTo(SeckillRequestStatus.SUCCESS);
             assertThat(status.orderId()).isNotNull();
             assertThat(status.messageId()).isNotBlank();
@@ -191,21 +198,24 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     @Test
     void unroutableMessageKeepsDurableAcceptanceAndReservationForRetry() {
         createUser(1);
-        createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID,1);
-        Binding binding=new Binding(RabbitMqConfig.MAIN_QUEUE,Binding.DestinationType.QUEUE,
-                RabbitMqConfig.MAIN_EXCHANGE,RabbitMqConfig.MAIN_ROUTING_KEY,null);
+        createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        Binding binding = new Binding(RabbitMqConfig.MAIN_QUEUE, Binding.DestinationType.QUEUE,
+                RabbitMqConfig.MAIN_EXCHANGE, RabbitMqConfig.MAIN_ROUTING_KEY, null);
         rabbitAdmin.removeBinding(binding);
         SeckillAcceptResponse accepted;
         try {
-            accepted=seckillService.seckill(1L,VOUCHER_ID);
+            accepted = seckillService.seckill(1L, VOUCHER_ID);
             assertThat(accepted.status()).isEqualTo(SeckillRequestStatus.PROCESSING);
             dispatcher.dispatch();
             assertThat(ledger.find(accepted.requestId()).phase()).isEqualTo("ACCEPTED");
             assertThat(stockService.stock(VOUCHER_ID)).isZero();
-        } finally { rabbitAdmin.declareBinding(binding); }
-        jdbcTemplate.update("UPDATE tb_outbox SET next_at_ms=0 WHERE request_id=?",accepted.requestId());
-        dispatcher.dispatch();awaitOrderCount(1);
+        } finally {
+            rabbitAdmin.declareBinding(binding);
+        }
+        jdbcTemplate.update("UPDATE tb_outbox SET next_at_ms=0 WHERE request_id=?", accepted.requestId());
+        dispatcher.dispatch();
+        awaitOrderCount(1);
     }
 
     @Test
@@ -295,10 +305,12 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void failureBeforeCommitRollsBackStockAndInsertedOrder() {
-        createActivity(VOUCHER_ID,3,3,LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
-        var message=preparedMessage(1,VOUCHER_ID,0,1,"SINGLE");
-        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),"rollback-single",com.voucherx.recovery.FaultInjector.Action.FAIL);
-        assertThatThrownBy(()->orderPersistenceService.persist(message)).isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
+        createActivity(VOUCHER_ID, 3, 3, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        var message = preparedMessage(1, VOUCHER_ID, 0, 1, "SINGLE");
+        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), "rollback-single",
+                com.voucherx.recovery.FaultInjector.Action.FAIL);
+        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+                .isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isEqualTo(3);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
         assertThat(ledger.find(message.requestId()).phase()).isEqualTo("ACCEPTED");
@@ -323,7 +335,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         stockService.initializeIfAbsent(VOUCHER_ID, 5);
         // 用户 1..4 与 8 的起始桶分别为 1..4 和 0，恰好覆盖 5 个非空桶。
-        for (long userId : new long[]{1, 2, 3, 4, 8}) {
+        for (long userId : new long[] { 1, 2, 3, 4, 8 }) {
             seckillService.seckill(userId, VOUCHER_ID);
         }
         awaitOrderCount(5);
@@ -432,11 +444,13 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
     @Test
     void failureBeforeCommitRollsBackBucketAndInsertedOrder() {
-        createBucketActivity(VOUCHER_ID,10,4,LocalDateTime.now().minusHours(1),LocalDateTime.now().plusHours(1));
-        var message=preparedMessage(1,VOUCHER_ID,0,1,"BUCKET");
-        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),"rollback-bucket",com.voucherx.recovery.FaultInjector.Action.FAIL);
-        assertThatThrownBy(()->orderPersistenceService.persist(message)).isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
-        assertThat(bucketMapper.sumRemaining(VOUCHER_ID,1)).isEqualTo(10);
+        createBucketActivity(VOUCHER_ID, 10, 4, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        var message = preparedMessage(1, VOUCHER_ID, 0, 1, "BUCKET");
+        faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), "rollback-bucket",
+                com.voucherx.recovery.FaultInjector.Action.FAIL);
+        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+                .isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
+        assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(10);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
     }
 
@@ -447,7 +461,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         stockService.initializeIfAbsent(VOUCHER_ID, 10);
 
         // 10 个用户都从桶 0 开始，桶 0 只有 4 张；最多尝试 3 个桶：0/1/2。
-        for (long userId : new long[]{3, 6, 9, 12, 15, 18, 21, 24, 27, 30}) {
+        for (long userId : new long[] { 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 }) {
             seckillService.seckill(userId, VOUCHER_ID);
         }
         awaitOrderCount(10);
@@ -472,8 +486,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
 
-        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-                assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isEqualTo(1));
+        org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isEqualTo(1));
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isZero();
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
     }
@@ -539,8 +553,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     private SeckillOrderMessage bucketMessage(long userId, long voucherId, int startBucket,
-                                              int layoutVersion, String mode) {
-        return preparedMessage(userId,voucherId,startBucket,layoutVersion,mode);
+            int layoutVersion, String mode) {
+        return preparedMessage(userId, voucherId, startBucket, layoutVersion, mode);
     }
 
     @Test
@@ -624,25 +638,24 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     /** 事务性测试夹具：准备真实受理流水，隔离自动投递后直接测试订单事务。 */
-    private SeckillOrderMessage preparedMessage(long user,long voucher,int bucket,int layout,String mode) {
-        return new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status->{
-            var request=ledger.intent(user,voucher,UUID.randomUUID().toString(),mode,bucket,layout);
+    private SeckillOrderMessage preparedMessage(long user, long voucher, int bucket, int layout, String mode) {
+        return new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+            var request = ledger.intent(user, voucher, UUID.randomUUID().toString(), mode, bucket, layout);
             ledger.accept(request.requestId());
-            jdbcTemplate.update("UPDATE tb_outbox SET state='QUARANTINED' WHERE request_id=?",request.requestId());
+            jdbcTemplate.update("UPDATE tb_outbox SET state='QUARANTINED' WHERE request_id=?", request.requestId());
             return request.message();
         });
     }
 
     private void awaitOrderCount(int expected) {
         await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofMillis(100))
-                .untilAsserted(() ->
-                        assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isEqualTo(expected));
+                .untilAsserted(() -> assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isEqualTo(expected));
     }
 
     private void insertUsers(int count) {
         List<Object[]> args = new ArrayList<>(count);
         for (long userId = 1; userId <= count; userId++) {
-            args.add(new Object[]{userId, String.format("138%08d", userId), "并发用户" + userId, ""});
+            args.add(new Object[] { userId, String.format("138%08d", userId), "并发用户" + userId, "" });
         }
         jdbcTemplate.batchUpdate("""
                 INSERT INTO tb_user (id, phone, nick_name, icon)

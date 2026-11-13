@@ -18,7 +18,7 @@ public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
              LIMIT 1
             """)
     VoucherOrder selectByVoucherAndUser(@Param("voucherId") Long voucherId,
-                                        @Param("userId") Long userId);
+            @Param("userId") Long userId);
 
     @Select("SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = #{voucherId}")
     long countByVoucherId(@Param("voucherId") Long voucherId);

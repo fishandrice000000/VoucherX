@@ -6,6 +6,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record SeckillProperties(
         long publishConfirmTimeoutMillis,
         long requestStatusTtlSeconds,
-        int bucketAttempts
-) {
+        int bucketAttempts) {
 }

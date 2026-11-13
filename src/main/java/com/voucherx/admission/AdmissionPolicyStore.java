@@ -19,8 +19,7 @@ public class AdmissionPolicyStore {
     private final DefaultRedisScript<Long> updateScript;
 
     public AdmissionPolicyStore(StringRedisTemplate redisTemplate,
-                                @Qualifier("admissionPolicyUpdateScript")
-                                DefaultRedisScript<Long> updateScript) {
+            @Qualifier("admissionPolicyUpdateScript") DefaultRedisScript<Long> updateScript) {
         this.redisTemplate = redisTemplate;
         this.updateScript = updateScript;
     }
@@ -33,8 +32,7 @@ public class AdmissionPolicyStore {
                             RedisKeys.admissionSharedPolicy()),
                     String.valueOf(rate),
                     String.valueOf(capacity),
-                    String.valueOf(validUntilMillis)
-            );
+                    String.valueOf(validUntilMillis));
             return result != null && result == 1L;
         } catch (DataAccessException ex) {
             return false;

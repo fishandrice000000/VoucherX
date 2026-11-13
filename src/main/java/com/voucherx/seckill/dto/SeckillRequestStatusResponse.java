@@ -10,6 +10,5 @@ public record SeckillRequestStatusResponse(
         SeckillRequestStatus status,
         Long orderId,
         String messageId,
-        String reason
-) {
+        String reason) {
 }

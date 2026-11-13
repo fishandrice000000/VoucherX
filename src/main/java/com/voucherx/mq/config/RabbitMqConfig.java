@@ -59,7 +59,7 @@ public class RabbitMqConfig {
 
     @Bean
     public Binding seckillDeadLetterBinding(Queue seckillDeadLetterQueue,
-                                             DirectExchange seckillDeadLetterExchange) {
+            DirectExchange seckillDeadLetterExchange) {
         return BindingBuilder.bind(seckillDeadLetterQueue)
                 .to(seckillDeadLetterExchange)
                 .with(DEAD_ROUTING_KEY);

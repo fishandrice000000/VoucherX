@@ -5,8 +5,7 @@ package com.voucherx.voucher.entity;
  * Redis 在两种模式下都使用单库存 Key，MySQL 桶模式只解决数据库行锁热点。
  */
 public enum StockMode {
-    SINGLE,
-    BUCKET;
+    SINGLE, BUCKET;
 
     public static StockMode parse(String value) {
         if (value == null || value.isBlank()) {

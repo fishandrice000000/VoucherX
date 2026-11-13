@@ -40,8 +40,13 @@ public final class RedisKeys {
         return "voucherx:seckill:users:" + voucherId;
     }
 
-    public static String seckillOwners(Long id) { return "voucherx:seckill:owners:" + id; }
-    public static String seckillGate(Long id) { return "voucherx:seckill:gate:" + id; }
+    public static String seckillOwners(Long id) {
+        return "voucherx:seckill:owners:" + id;
+    }
+
+    public static String seckillGate(Long id) {
+        return "voucherx:seckill:gate:" + id;
+    }
 
     public static String seckillRequest(String requestId) {
         return "voucherx:seckill:request:" + requestId;

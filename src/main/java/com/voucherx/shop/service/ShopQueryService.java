@@ -35,10 +35,10 @@ public class ShopQueryService {
     private final DefaultRedisScript<Long> shopLockReleaseScript;
 
     public ShopQueryService(ShopMapper shopMapper,
-                            StringRedisTemplate redisTemplate,
-                            ObjectMapper objectMapper,
-                            ShopCacheProperties properties,
-                            @Qualifier("shopLockReleaseScript") DefaultRedisScript<Long> shopLockReleaseScript) {
+            StringRedisTemplate redisTemplate,
+            ObjectMapper objectMapper,
+            ShopCacheProperties properties,
+            @Qualifier("shopLockReleaseScript") DefaultRedisScript<Long> shopLockReleaseScript) {
         this.shopMapper = shopMapper;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;

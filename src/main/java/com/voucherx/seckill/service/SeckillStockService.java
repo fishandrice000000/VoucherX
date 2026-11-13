@@ -27,8 +27,8 @@ public class SeckillStockService {
     private final DefaultRedisScript<Long> seckillReleaseScript;
 
     public SeckillStockService(StringRedisTemplate redisTemplate,
-                               @Qualifier("seckillReserveScript") DefaultRedisScript<Long> seckillReserveScript,
-                               @Qualifier("seckillReleaseScript") DefaultRedisScript<Long> seckillReleaseScript) {
+            @Qualifier("seckillReserveScript") DefaultRedisScript<Long> seckillReserveScript,
+            @Qualifier("seckillReleaseScript") DefaultRedisScript<Long> seckillReleaseScript) {
         this.redisTemplate = redisTemplate;
         this.seckillReserveScript = seckillReserveScript;
         this.seckillReleaseScript = seckillReleaseScript;
@@ -38,20 +38,22 @@ public class SeckillStockService {
      * 返回 >=0 表示预扣后的剩余库存；负数含义见 Lua 脚本注释。
      */
     public long reserve(Long voucherId, Long userId, String requestId,
-                        long nowMillis, long beginMillis, long endMillis,
-                        String stockMode, int startBucketNo, int layoutVersion) {
-        return reserve(voucherId,userId,requestId,nowMillis,beginMillis,endMillis,stockMode,startBucketNo,layoutVersion,1);
+            long nowMillis, long beginMillis, long endMillis,
+            String stockMode, int startBucketNo, int layoutVersion) {
+        return reserve(voucherId, userId, requestId, nowMillis, beginMillis, endMillis, stockMode, startBucketNo,
+                layoutVersion, 1);
     }
+
     public long reserve(Long voucherId, Long userId, String requestId,
-                        long nowMillis, long beginMillis, long endMillis,
-                        String stockMode, int startBucketNo, int layoutVersion,long epoch) {
+            long nowMillis, long beginMillis, long endMillis,
+            String stockMode, int startBucketNo, int layoutVersion, long epoch) {
         try {
             Long result = redisTemplate.execute(
                     seckillReserveScript,
                     List.of(RedisKeys.seckillStock(voucherId),
                             RedisKeys.seckillUsers(voucherId),
                             RedisKeys.seckillRequest(requestId),
-                            RedisKeys.seckillOwners(voucherId),RedisKeys.seckillGate(voucherId)),
+                            RedisKeys.seckillOwners(voucherId), RedisKeys.seckillGate(voucherId)),
                     String.valueOf(userId),
                     requestId,
                     String.valueOf(nowMillis),
@@ -60,8 +62,7 @@ public class SeckillStockService {
                     String.valueOf(voucherId),
                     stockMode,
                     String.valueOf(startBucketNo),
-                    String.valueOf(layoutVersion), String.valueOf(epoch)
-            );
+                    String.valueOf(layoutVersion), String.valueOf(epoch));
             if (result == null) {
                 throw new BusinessException(ErrorCode.SECKILL_STOCK_UNAVAILABLE);
             }
@@ -76,18 +77,18 @@ public class SeckillStockService {
      * 发布确认结果未知时禁止调用。
      */
     public boolean release(Long voucherId, Long userId, String requestId, String reason) {
-        return release(voucherId,userId,requestId,reason,1);
+        return release(voucherId, userId, requestId, reason, 1);
     }
-    public boolean release(Long voucherId,Long userId,String requestId,String reason,long epoch) {
+
+    public boolean release(Long voucherId, Long userId, String requestId, String reason, long epoch) {
         try {
             Long result = redisTemplate.execute(
                     seckillReleaseScript,
                     List.of(RedisKeys.seckillStock(voucherId),
                             RedisKeys.seckillUsers(voucherId),
                             RedisKeys.seckillRequest(requestId),
-                            RedisKeys.seckillOwners(voucherId),RedisKeys.seckillGate(voucherId)),
-                    String.valueOf(userId), reason, requestId, String.valueOf(epoch)
-            );
+                            RedisKeys.seckillOwners(voucherId), RedisKeys.seckillGate(voucherId)),
+                    String.valueOf(userId), reason, requestId, String.valueOf(epoch));
             return result != null && (result == 1L || result == 2L);
         } catch (DataAccessException ex) {
             log.error("释放 Redis 秒杀预扣失败，requestId={}", requestId, ex);

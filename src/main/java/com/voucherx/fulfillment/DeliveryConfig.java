@@ -6,5 +6,8 @@ import java.time.Clock;
 
 @Configuration
 public class DeliveryConfig {
-    @Bean public Clock businessClock() { return Clock.systemUTC(); }
+    @Bean
+    public Clock businessClock() {
+        return Clock.systemUTC();
+    }
 }

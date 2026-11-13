@@ -27,8 +27,8 @@ import java.util.regex.Pattern;
  *
  * 用法：
  * java bench/PhaseLoadClient.java --url http://localhost:8080 --voucher 9201 \
- *   --tokens tmp/02/tokens.txt --base-rate 200 --phases 0.7:60,1.5:120,0.7:120 \
- *   --warmup 30 --concurrency 128 --max-inflight 512 --output tmp/02/run-...
+ * --tokens tmp/02/tokens.txt --base-rate 200 --phases 0.7:60,1.5:120,0.7:120 \
+ * --warmup 30 --concurrency 128 --max-inflight 512 --output tmp/02/run-...
  *
  * phases 的每一项是“倍数:秒”，倍数为相对 base-rate 的到达率；0 表示暂停。
  * 每个阶段单独记录目标/实际受理/拒绝/HTTP 延迟；阶段结束后等待在途请求完成。
@@ -38,7 +38,7 @@ public final class PhaseLoadClient {
     private static final Pattern REQUEST_ID = Pattern.compile("\"requestId\":\"([^\"]+)\"");
 
     private record Phase(String name, double factor, double rate, int seconds,
-                         long startEpochMillis, long endEpochMillis) {
+            long startEpochMillis, long endEpochMillis) {
     }
 
     private static final class PhaseCounters {
@@ -144,9 +144,9 @@ public final class PhaseLoadClient {
     }
 
     private static void dispatch(long endNanos, double rate, long phaseStartNanos,
-                                 HttpClient client, URI uri, List<String> tokens,
-                                 AtomicInteger tokenIndex, Semaphore inFlight,
-                                 AtomicInteger active, PhaseCounters counters) {
+            HttpClient client, URI uri, List<String> tokens,
+            AtomicInteger tokenIndex, Semaphore inFlight,
+            AtomicInteger active, PhaseCounters counters) {
         if (rate <= 0) {
             while (System.nanoTime() < endNanos) {
                 LockSupport.parkNanos(50_000_000L);
@@ -219,14 +219,14 @@ public final class PhaseLoadClient {
     }
 
     private static void writeOutputs(Path output, double baseRate, long voucherId,
-                                     int warmupSeconds, int concurrency, int maxInflight,
-                                     int tokenCount, int tokenOffset, long startEpochMillis,
-                                     List<Phase> phases, List<Phase> measured,
-                                     List<PhaseCounters> counters, long drainSeconds) throws IOException {
+            int warmupSeconds, int concurrency, int maxInflight,
+            int tokenCount, int tokenOffset, long startEpochMillis,
+            List<Phase> phases, List<Phase> measured,
+            List<PhaseCounters> counters, long drainSeconds) throws IOException {
         try (BufferedWriter summary = Files.newBufferedWriter(output.resolve("phase-summary.csv"),
                 StandardCharsets.UTF_8);
-             BufferedWriter accepted = Files.newBufferedWriter(output.resolve("accepted_requests.csv"),
-                     StandardCharsets.UTF_8)) {
+                BufferedWriter accepted = Files.newBufferedWriter(output.resolve("accepted_requests.csv"),
+                        StandardCharsets.UTF_8)) {
             summary.write("phase,factor,target_rate,configured_seconds,start_epoch_ms,end_epoch_ms,"
                     + "attempts,accepted,rejected,unknown,errors,skipped,"
                     + "http_p50_all_ms,http_p95_all_ms,http_p99_all_ms,"
@@ -266,7 +266,7 @@ public final class PhaseLoadClient {
     }
 
     private static void printSummary(Path output, double baseRate, List<Phase> phases,
-                                     List<PhaseCounters> counters, long drainSeconds) {
+            List<PhaseCounters> counters, long drainSeconds) {
         System.out.println("output=" + output);
         System.out.println("base_rate=" + baseRate + " drain_seconds=" + drainSeconds);
         for (int i = 0; i < phases.size(); i++) {

@@ -12,8 +12,7 @@ public record AdmissionProperties(
         AdmissionMode mode,
         Local local,
         Global global,
-        Controller controller
-) {
+        Controller controller) {
 
     public AdmissionProperties {
         if (mode == null) {
@@ -68,8 +67,7 @@ public record AdmissionProperties(
     public record Local(
             boolean enabled,
             double ratePerSecond,
-            double capacity
-    ) {
+            double capacity) {
     }
 
     public record Global(
@@ -78,8 +76,7 @@ public record AdmissionProperties(
             double sharedCapacity,
             double activityRate,
             double activityCapacity,
-            long policyTtlMillis
-    ) {
+            long policyTtlMillis) {
     }
 
     public record Controller(
@@ -94,7 +91,6 @@ public record AdmissionProperties(
             double minCompletionRatio,
             int healthWindows,
             long cooldownMillis,
-            long policyTtlMillis
-    ) {
+            long policyTtlMillis) {
     }
 }

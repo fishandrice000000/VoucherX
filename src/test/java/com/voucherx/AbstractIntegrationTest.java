@@ -31,19 +31,17 @@ import org.testcontainers.utility.DockerImageName;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class AbstractIntegrationTest {
 
-    protected static final MySQLContainer<?> MYSQL =
-            new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))
-                    .withDatabaseName("voucherx")
-                    .withUsername("voucherx")
-                    .withPassword("voucherx")
-                    .withInitScript("db/schema.sql");
+    protected static final MySQLContainer<?> MYSQL = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))
+            .withDatabaseName("voucherx")
+            .withUsername("voucherx")
+            .withPassword("voucherx")
+            .withInitScript("db/schema.sql");
 
-    protected static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
-                    .withExposedPorts(6379);
+    protected static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
+            .withExposedPorts(6379);
 
-    protected static final RabbitMQContainer RABBITMQ =
-            new RabbitMQContainer(DockerImageName.parse("rabbitmq:3.13-alpine"));
+    protected static final RabbitMQContainer RABBITMQ = new RabbitMQContainer(
+            DockerImageName.parse("rabbitmq:3.13-alpine"));
 
     static {
         MYSQL.start();
@@ -111,26 +109,26 @@ public abstract class AbstractIntegrationTest {
 
     protected void createUser(long userId) {
         jdbcTemplate.update("""
-                        INSERT INTO tb_user (id, phone, nick_name, icon)
-                        VALUES (?, ?, ?, '')
-                        """,
+                INSERT INTO tb_user (id, phone, nick_name, icon)
+                VALUES (?, ?, ?, '')
+                """,
                 userId, String.format("138%08d", userId), "测试用户" + userId);
     }
 
     protected void createActivity(long voucherId, int totalStock, int stock,
-                                  java.time.LocalDateTime begin, java.time.LocalDateTime end) {
+            java.time.LocalDateTime begin, java.time.LocalDateTime end) {
         jdbcTemplate.update("""
-                        INSERT INTO tb_voucher
-                            (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
-                        VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
-                        """,
+                INSERT INTO tb_voucher
+                    (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+                VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
+                """,
                 voucherId, "测试秒杀券-" + voucherId);
         jdbcTemplate.update("""
-                        INSERT INTO tb_seckill_voucher
-                            (voucher_id, total_stock, stock, stock_mode, bucket_count,
-                             layout_version, begin_time, end_time)
-                        VALUES (?, ?, ?, 'SINGLE', 1, 1, ?, ?)
-                        """,
+                INSERT INTO tb_seckill_voucher
+                    (voucher_id, total_stock, stock, stock_mode, bucket_count,
+                     layout_version, begin_time, end_time)
+                VALUES (?, ?, ?, 'SINGLE', 1, 1, ?, ?)
+                """,
                 voucherId, totalStock, stock, begin, end);
     }
 
@@ -139,29 +137,29 @@ public abstract class AbstractIntegrationTest {
      * 由测试显式初始化；本辅助方法不写入 Redis。
      */
     protected void createBucketActivity(long voucherId, int totalStock, int bucketCount,
-                                        java.time.LocalDateTime begin, java.time.LocalDateTime end) {
+            java.time.LocalDateTime begin, java.time.LocalDateTime end) {
         jdbcTemplate.update("""
-                        INSERT INTO tb_voucher
-                            (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
-                        VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
-                        """,
+                INSERT INTO tb_voucher
+                    (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+                VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
+                """,
                 voucherId, "测试分桶秒杀券-" + voucherId);
         jdbcTemplate.update("""
-                        INSERT INTO tb_seckill_voucher
-                            (voucher_id, total_stock, stock, stock_mode, bucket_count,
-                             layout_version, begin_time, end_time)
-                        VALUES (?, ?, 0, 'BUCKET', ?, 1, ?, ?)
-                        """,
+                INSERT INTO tb_seckill_voucher
+                    (voucher_id, total_stock, stock, stock_mode, bucket_count,
+                     layout_version, begin_time, end_time)
+                VALUES (?, ?, 0, 'BUCKET', ?, 1, ?, ?)
+                """,
                 voucherId, totalStock, bucketCount, begin, end);
         int base = totalStock / bucketCount;
         int remainder = totalStock % bucketCount;
         for (int bucketNo = 0; bucketNo < bucketCount; bucketNo++) {
             int amount = base + (bucketNo < remainder ? 1 : 0);
             jdbcTemplate.update("""
-                            INSERT INTO tb_seckill_voucher_bucket
-                                (voucher_id, bucket_no, total_stock, remaining_stock, layout_version)
-                            VALUES (?, ?, ?, ?, 1)
-                            """,
+                    INSERT INTO tb_seckill_voucher_bucket
+                        (voucher_id, bucket_no, total_stock, remaining_stock, layout_version)
+                    VALUES (?, ?, ?, ?, 1)
+                    """,
                     voucherId, bucketNo, amount, amount);
         }
     }

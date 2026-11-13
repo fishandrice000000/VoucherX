@@ -9,6 +9,5 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record CodeResponse(
         String phone,
         long expiresInSeconds,
-        String code
-) {
+        String code) {
 }

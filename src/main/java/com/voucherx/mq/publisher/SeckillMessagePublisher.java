@@ -38,15 +38,14 @@ public class SeckillMessagePublisher {
     private final SeckillProperties properties;
 
     public SeckillMessagePublisher(RabbitTemplate rabbitTemplate,
-                                   ObjectMapper objectMapper,
-                                   SeckillProperties properties) {
+            ObjectMapper objectMapper,
+            SeckillProperties properties) {
         this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = objectMapper;
         this.properties = properties;
         // 仅用于记录不可路由消息；CorrelationData.returned 由 Spring AMQP 维护。
-        this.rabbitTemplate.setReturnsCallback(returned ->
-                log.error("秒杀消息不可路由，exchange={}, routingKey={}, reply={}",
-                        returned.getExchange(), returned.getRoutingKey(), returned.getReplyText()));
+        this.rabbitTemplate.setReturnsCallback(returned -> log.error("秒杀消息不可路由，exchange={}, routingKey={}, reply={}",
+                returned.getExchange(), returned.getRoutingKey(), returned.getReplyText()));
     }
 
     public PublishResult publish(SeckillOrderMessage message) {
@@ -60,7 +59,7 @@ public class SeckillMessagePublisher {
     }
 
     private PublishResult publishInternal(SeckillOrderMessage message, String exchange,
-                                          String routingKey, int retryCount) {
+            String routingKey, int retryCount) {
         CorrelationData correlationData = new CorrelationData(UUID.randomUUID().toString());
 
         Message amqpMessage;

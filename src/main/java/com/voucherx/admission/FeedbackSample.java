@@ -16,8 +16,7 @@ public record FeedbackSample(
         boolean queueMeasured,
         int hikariActive,
         int hikariPending,
-        boolean hikariMeasured
-) {
+        boolean hikariMeasured) {
 
     public double completedTps() {
         return windowMillis <= 0 ? 0 : completedOrders * 1000.0 / windowMillis;

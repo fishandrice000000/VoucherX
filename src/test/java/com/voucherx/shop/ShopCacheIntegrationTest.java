@@ -110,10 +110,10 @@ class ShopCacheIntegrationTest extends AbstractIntegrationTest {
 
     private void insertShop(String name) {
         jdbcTemplate.update("""
-                        INSERT INTO tb_shop
-                            (id, name, type_id, images, area, address, avg_price, sold, comments, score, open_hours)
-                        VALUES (?, ?, 1, '', '', '', 1000, 0, 0, 45, '10:00-22:00')
-                        """,
+                INSERT INTO tb_shop
+                    (id, name, type_id, images, area, address, avg_price, sold, comments, score, open_hours)
+                VALUES (?, ?, 1, '', '', '', 1000, 0, 0, 45, '10:00-22:00')
+                """,
                 SHOP_ID, name);
     }
 }

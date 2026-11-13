@@ -11,15 +11,15 @@ import org.springframework.context.annotation.Configuration;
 public class DeliveryListenerConfig {
     @Bean
     public SimpleRabbitListenerContainerFactory deliveryContainerFactory(ConnectionFactory connection,
-            SimpleRabbitListenerContainerFactoryConfigurer configurer,DeliveryProperties properties) {
-        var factory=new SimpleRabbitListenerContainerFactory();
-        configurer.configure(factory,connection);
+            SimpleRabbitListenerContainerFactoryConfigurer configurer, DeliveryProperties properties) {
+        var factory = new SimpleRabbitListenerContainerFactory();
+        configurer.configure(factory, connection);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
         factory.setBatchListener(true);
         factory.setConsumerBatchEnabled(true);
-        factory.setBatchSize(properties.batchEnabled()?properties.batchSize():1);
-        factory.setReceiveTimeout((long)properties.batchWaitMillis());
-        factory.setPrefetchCount(Math.max(10,properties.batchSize()));
+        factory.setBatchSize(properties.batchEnabled() ? properties.batchSize() : 1);
+        factory.setReceiveTimeout((long) properties.batchWaitMillis());
+        factory.setPrefetchCount(Math.max(10, properties.batchSize()));
         return factory;
     }
 }

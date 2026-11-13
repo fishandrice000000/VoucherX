@@ -45,7 +45,8 @@ public class GlobalExceptionHandler {
         return badRequest(message);
     }
 
-    @ExceptionHandler({MissingServletRequestParameterException.class, HttpMessageNotReadableException.class, org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({ MissingServletRequestParameterException.class, HttpMessageNotReadableException.class,
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class })
     public ResponseEntity<ApiResponse<Void>> handleMalformedRequest(Exception ex) {
         return badRequest("请求参数格式不正确");
     }
@@ -59,8 +60,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
     public ResponseEntity<ApiResponse<Void>> handleConflict(org.springframework.dao.DuplicateKeyException ex) {
-        ErrorCode code=ErrorCode.CONFLICT;
-        return ResponseEntity.status(code.httpStatus()).body(ApiResponse.error(code.code(),"资源或幂等标识冲突"));
+        ErrorCode code = ErrorCode.CONFLICT;
+        return ResponseEntity.status(code.httpStatus()).body(ApiResponse.error(code.code(), "资源或幂等标识冲突"));
     }
 
     @ExceptionHandler(Exception.class)

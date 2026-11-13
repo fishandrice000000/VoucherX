@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * 有效期后收到 503，而不是永久使用旧策略放行。
  */
 @Component
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="voucherx.maintenance-mode",havingValue="false",matchIfMissing=true)
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)
 public class AdaptiveAdmissionController {
 
     private static final Logger log = LoggerFactory.getLogger(AdaptiveAdmissionController.class);
@@ -23,8 +23,8 @@ public class AdaptiveAdmissionController {
     private final AdaptiveRateController controller;
 
     public AdaptiveAdmissionController(AdmissionProperties properties,
-                                       AdmissionFeedbackCollector collector,
-                                       AdmissionPolicyStore policyStore) {
+            AdmissionFeedbackCollector collector,
+            AdmissionPolicyStore policyStore) {
         this.properties = properties;
         this.collector = collector;
         this.policyStore = policyStore;
@@ -46,8 +46,7 @@ public class AdaptiveAdmissionController {
             return;
         }
         FeedbackSample sample = collector.collect();
-        AdaptiveRateController.Decision decision =
-                controller.evaluate(sample, System.nanoTime());
+        AdaptiveRateController.Decision decision = controller.evaluate(sample, System.nanoTime());
         if (decision.changed() || !"HOLD".equals(decision.reason())
                 && !"IDLE_HOLD".equals(decision.reason())) {
             log.info("准入自适应调整: rate={}, capacity={}, reason={}, queueReady={}, inFlight={}, completedTps={}",

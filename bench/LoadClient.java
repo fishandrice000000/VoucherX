@@ -27,9 +27,9 @@ import java.util.regex.Pattern;
  *
  * 用法：
  * java bench/LoadClient.java --url http://localhost:8080 --voucher 9001 \
- *   --tokens tmp/01/tokens.txt --rate 500 --warmup 30 --duration 120 \
- *   --concurrency 256 --max-inflight 512 --sample-status 100 \
- *   --output tmp/01/run-...
+ * --tokens tmp/01/tokens.txt --rate 500 --warmup 30 --duration 120 \
+ * --concurrency 256 --max-inflight 512 --sample-status 100 \
+ * --output tmp/01/run-...
  *
  * rate > 0 为开环限速；rate = 0 为固定并发闭环。开环模式在 in-flight 达到上限时
  * 记录 skipped，不把未发出的请求算作系统吞吐。
@@ -172,8 +172,8 @@ public final class LoadClient {
                                 && counters.samples.size() < sampleStatus) {
                             Sample sample = new Sample(requestId, token, requestStart);
                             counters.samples.add(sample);
-                            Thread.startVirtualThread(() ->
-                                    pollStatus(client, baseUrl, sample, counters, sampleIntervalMillis));
+                            Thread.startVirtualThread(
+                                    () -> pollStatus(client, baseUrl, sample, counters, sampleIntervalMillis));
                         }
                     }
                 }
@@ -256,7 +256,7 @@ public final class LoadClient {
     }
 
     private static void pollStatus(HttpClient client, String baseUrl, Sample sample, Counters counters,
-                                   long sampleIntervalMillis) {
+            long sampleIntervalMillis) {
         URI uri = URI.create(baseUrl + "/api/seckill/requests/" + sample.requestId());
         long deadline = System.nanoTime() + Duration.ofSeconds(120).toNanos();
         try {
@@ -290,10 +290,10 @@ public final class LoadClient {
     }
 
     private static void writeOutputs(Path output, double rate, long voucherId,
-                                     int warmup, int duration, int concurrency,
-                                     int maxInflight, int tokens,
-                                     long startEpochMillis, long measureStartEpochMillis,
-                                     long measureEndEpochMillis, Counters counters) throws IOException {
+            int warmup, int duration, int concurrency,
+            int maxInflight, int tokens,
+            long startEpochMillis, long measureStartEpochMillis,
+            long measureEndEpochMillis, Counters counters) throws IOException {
         List<Long> latencies = new ArrayList<>(counters.latenciesNanos);
         List<Long> e2e = new ArrayList<>(counters.e2eNanos);
         try (BufferedWriter writer = Files.newBufferedWriter(output.resolve("summary.txt"))) {

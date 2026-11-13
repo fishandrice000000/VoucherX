@@ -50,7 +50,9 @@ public class RedisScriptConfig {
     }
 
     @Bean
-    public DefaultRedisScript<Long> recoveryPublishScript() { return script("lua/recovery_publish.lua"); }
+    public DefaultRedisScript<Long> recoveryPublishScript() {
+        return script("lua/recovery_publish.lua");
+    }
 
     private DefaultRedisScript<Long> script(String classpath) {
         try {

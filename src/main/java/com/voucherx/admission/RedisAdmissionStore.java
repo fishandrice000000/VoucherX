@@ -20,7 +20,7 @@ public class RedisAdmissionStore {
     private final DefaultRedisScript<Long> acquireScript;
 
     public RedisAdmissionStore(StringRedisTemplate redisTemplate,
-                               @Qualifier("admissionAcquireScript") DefaultRedisScript<Long> acquireScript) {
+            @Qualifier("admissionAcquireScript") DefaultRedisScript<Long> acquireScript) {
         this.redisTemplate = redisTemplate;
         this.acquireScript = acquireScript;
     }
@@ -39,8 +39,7 @@ public class RedisAdmissionStore {
                     String.valueOf(global.sharedCapacity()),
                     String.valueOf(global.activityRate()),
                     String.valueOf(global.activityCapacity()),
-                    properties.mode().name()
-            );
+                    properties.mode().name());
             if (result == null) {
                 return AdmissionDecision.INVALID_POLICY;
             }

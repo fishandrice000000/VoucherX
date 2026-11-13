@@ -10,8 +10,7 @@ public record AuthProperties(
         long codeCooldownSeconds,
         int ipLimitPerMinute,
         long tokenTtlSeconds,
-        boolean exposeCode
-) {
+        boolean exposeCode) {
 
     public Duration codeTtl() {
         return Duration.ofSeconds(codeTtlSeconds);

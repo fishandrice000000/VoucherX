@@ -22,13 +22,13 @@ public class SeckillAdmissionService {
     private final RedisAdmissionStore redisStore;
 
     public SeckillAdmissionService(AdmissionProperties properties,
-                                   LocalAdmissionGate localGate,
-                                   RedisAdmissionStore redisStore) {
+            LocalAdmissionGate localGate,
+            RedisAdmissionStore redisStore) {
         this.properties = properties;
         this.localGate = localGate;
         this.redisStore = redisStore;
         log.info("秒杀准入配置: mode={}, local={} ({} rps, cap {}), global={} "
-                        + "(shared {} rps/cap {}, activity {} rps/cap {})",
+                + "(shared {} rps/cap {}, activity {} rps/cap {})",
                 properties.mode(), properties.local().enabled(),
                 properties.local().ratePerSecond(), properties.local().capacity(),
                 properties.global().enabled(), properties.global().sharedRate(),
@@ -60,10 +60,10 @@ public class SeckillAdmissionService {
             case ALLOWED -> {
             }
             case SHARED_REJECTED, ACTIVITY_REJECTED, BURST_REJECTED ->
-                    throw new BusinessException(ErrorCode.SECKILL_BUSY);
+                throw new BusinessException(ErrorCode.SECKILL_BUSY);
             case POLICY_STALE, INVALID_POLICY ->
-                    throw new BusinessException(ErrorCode.SECKILL_ADMISSION_UNAVAILABLE,
-                            "秒杀准入策略不可用，请稍后重试");
+                throw new BusinessException(ErrorCode.SECKILL_ADMISSION_UNAVAILABLE,
+                        "秒杀准入策略不可用，请稍后重试");
         }
     }
 

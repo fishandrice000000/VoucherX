@@ -88,8 +88,7 @@ public class CompletionMetrics {
             long transactionNanos,
             long transactionCount,
             int inFlight,
-            int maxInFlight
-    ) {
+            int maxInFlight) {
         public double averageTransactionMillis() {
             return transactionCount == 0 ? 0 : transactionNanos / 1_000_000.0 / transactionCount;
         }

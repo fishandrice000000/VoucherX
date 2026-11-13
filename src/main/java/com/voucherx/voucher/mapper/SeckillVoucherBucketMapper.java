@@ -19,8 +19,8 @@ public interface SeckillVoucherBucketMapper {
                AND remaining_stock > 0
             """)
     int deductBucket(@Param("voucherId") Long voucherId,
-                     @Param("bucketNo") Integer bucketNo,
-                     @Param("layoutVersion") Integer layoutVersion);
+            @Param("bucketNo") Integer bucketNo,
+            @Param("layoutVersion") Integer layoutVersion);
 
     @Select("""
             SELECT COUNT(*) AS bucket_count,
@@ -30,26 +30,26 @@ public interface SeckillVoucherBucketMapper {
              WHERE voucher_id = #{voucherId} AND layout_version = #{layoutVersion}
             """)
     BucketLayoutStats selectLayoutStats(@Param("voucherId") Long voucherId,
-                                        @Param("layoutVersion") Integer layoutVersion);
+            @Param("layoutVersion") Integer layoutVersion);
 
     @Select("""
             SELECT COUNT(*) FROM tb_seckill_voucher_bucket
              WHERE voucher_id = #{voucherId} AND layout_version = #{layoutVersion}
             """)
     int countBuckets(@Param("voucherId") Long voucherId,
-                     @Param("layoutVersion") Integer layoutVersion);
+            @Param("layoutVersion") Integer layoutVersion);
 
     @Select("""
             SELECT COALESCE(SUM(remaining_stock), 0) FROM tb_seckill_voucher_bucket
              WHERE voucher_id = #{voucherId} AND layout_version = #{layoutVersion}
             """)
     long sumRemaining(@Param("voucherId") Long voucherId,
-                      @Param("layoutVersion") Integer layoutVersion);
+            @Param("layoutVersion") Integer layoutVersion);
 
     @Select("""
             SELECT COALESCE(SUM(total_stock), 0) FROM tb_seckill_voucher_bucket
              WHERE voucher_id = #{voucherId} AND layout_version = #{layoutVersion}
             """)
     long sumTotal(@Param("voucherId") Long voucherId,
-                  @Param("layoutVersion") Integer layoutVersion);
+            @Param("layoutVersion") Integer layoutVersion);
 }

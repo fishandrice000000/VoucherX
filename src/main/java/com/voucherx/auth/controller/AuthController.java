@@ -29,7 +29,7 @@ public class AuthController {
 
     @PostMapping("/code")
     public ApiResponse<CodeResponse> sendCode(@Valid @RequestBody SendCodeRequest request,
-                                              HttpServletRequest httpRequest) {
+            HttpServletRequest httpRequest) {
         return ApiResponse.ok(authService.sendCode(request.phone(), httpRequest.getRemoteAddr()));
     }
 

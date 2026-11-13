@@ -29,8 +29,8 @@ public class AdmissionFeedbackCollector {
     private long lastSampleNanos;
 
     public AdmissionFeedbackCollector(CompletionMetrics completionMetrics,
-                                      ObjectProvider<RabbitAdmin> rabbitAdminProvider,
-                                      DataSource dataSource) {
+            ObjectProvider<RabbitAdmin> rabbitAdminProvider,
+            DataSource dataSource) {
         this.completionMetrics = completionMetrics;
         this.rabbitAdminProvider = rabbitAdminProvider;
         this.hikariBean = dataSource instanceof HikariDataSource hikari

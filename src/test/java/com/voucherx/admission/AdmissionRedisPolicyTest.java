@@ -10,9 +10,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AdmissionRedisPolicyTest extends AbstractIntegrationTest {
 
     private static final long VOUCHER_ID = 2199L;
-    private static final AdmissionProperties.Controller CONTROLLER =
-            new AdmissionProperties.Controller(2000, 100, 10, 400, 10, 0.8,
-                    1000, 100, 0.9, 3, 10_000, 10_000);
+    private static final AdmissionProperties.Controller CONTROLLER = new AdmissionProperties.Controller(2000, 100, 10,
+            400, 10, 0.8,
+            1000, 100, 0.9, 3, 10_000, 10_000);
 
     @Autowired
     private RedisAdmissionStore store;
@@ -114,14 +114,14 @@ class AdmissionRedisPolicyTest extends AbstractIntegrationTest {
     }
 
     private AdmissionProperties properties(double sharedRate, double sharedCapacity,
-                                           double activityRate, double activityCapacity) {
+            double activityRate, double activityCapacity) {
         return properties(sharedRate, sharedCapacity, activityRate, activityCapacity,
                 AdmissionMode.FIXED);
     }
 
     private AdmissionProperties properties(double sharedRate, double sharedCapacity,
-                                           double activityRate, double activityCapacity,
-                                           AdmissionMode mode) {
+            double activityRate, double activityCapacity,
+            AdmissionMode mode) {
         return new AdmissionProperties(mode,
                 new AdmissionProperties.Local(false, 1000, 100),
                 new AdmissionProperties.Global(true, sharedRate, sharedCapacity,

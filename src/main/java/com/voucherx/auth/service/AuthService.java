@@ -35,9 +35,9 @@ public class AuthService {
     private final DefaultRedisScript<Long> consumeAuthCodeScript;
 
     public AuthService(UserMapper userMapper,
-                       StringRedisTemplate redisTemplate,
-                       AuthProperties authProperties,
-                       @Qualifier("consumeAuthCodeScript") DefaultRedisScript<Long> consumeAuthCodeScript) {
+            StringRedisTemplate redisTemplate,
+            AuthProperties authProperties,
+            @Qualifier("consumeAuthCodeScript") DefaultRedisScript<Long> consumeAuthCodeScript) {
         this.userMapper = userMapper;
         this.redisTemplate = redisTemplate;
         this.authProperties = authProperties;
@@ -60,8 +60,7 @@ public class AuthService {
         Long consumed = redisTemplate.execute(
                 consumeAuthCodeScript,
                 List.of(RedisKeys.authCode(phone)),
-                code
-        );
+                code);
         if (consumed == null || consumed != 1L) {
             throw new BusinessException(ErrorCode.AUTH_CODE_INVALID);
         }
@@ -75,8 +74,7 @@ public class AuthService {
         redisTemplate.opsForValue().set(
                 RedisKeys.token(token),
                 String.valueOf(user.getId()),
-                authProperties.tokenTtl()
-        );
+                authProperties.tokenTtl());
         return new LoginResponse(token, user.getId(), user.getPhone());
     }
 

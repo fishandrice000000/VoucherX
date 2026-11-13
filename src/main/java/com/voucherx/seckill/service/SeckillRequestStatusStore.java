@@ -31,9 +31,8 @@ public class SeckillRequestStatusStore {
     private final DefaultRedisScript<Long> statusScript;
 
     public SeckillRequestStatusStore(StringRedisTemplate redisTemplate,
-                                     SeckillProperties properties,
-                                     @Qualifier("seckillRequestStatusScript")
-                                     DefaultRedisScript<Long> statusScript) {
+            SeckillProperties properties,
+            @Qualifier("seckillRequestStatusScript") DefaultRedisScript<Long> statusScript) {
         this.redisTemplate = redisTemplate;
         this.properties = properties;
         this.statusScript = statusScript;
@@ -68,7 +67,7 @@ public class SeckillRequestStatusStore {
     }
 
     private void update(String requestId, SeckillRequestStatus status, String messageId,
-                        Long orderId, String reason) {
+            Long orderId, String reason) {
         try {
             redisTemplate.execute(
                     statusScript,
@@ -77,8 +76,7 @@ public class SeckillRequestStatusStore {
                     messageId == null ? "" : messageId,
                     orderId == null ? "" : String.valueOf(orderId),
                     reason == null ? "" : reason,
-                    String.valueOf(properties.requestStatusTtlSeconds())
-            );
+                    String.valueOf(properties.requestStatusTtlSeconds()));
         } catch (DataAccessException ex) {
             // 状态缓存失败不能影响已经提交的数据库事务，查询会回源 MySQL。
             log.warn("写入秒杀请求状态失败，requestId={}, status={}", requestId, status, ex);

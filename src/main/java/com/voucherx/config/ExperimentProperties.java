@@ -9,8 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record ExperimentProperties(
         boolean enabled,
         long transactionDelayMillis,
-        String delayFile
-) {
+        String delayFile) {
 
     public ExperimentProperties {
         if (transactionDelayMillis < 0) {

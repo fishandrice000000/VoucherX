@@ -28,10 +28,10 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
         String code = sendCode(phone);
 
         MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","code":"%s"}
-                                """.formatted(phone, code)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s","code":"%s"}
+                        """.formatted(phone, code)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.token").isNotEmpty())
                 .andExpect(jsonPath("$.data.userId").isNumber())
@@ -65,27 +65,27 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
         String code = sendCode(phone);
 
         mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","code":"000000"}
-                                """.formatted(phone)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s","code":"000000"}
+                        """.formatted(phone)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40010));
 
         // 正确验证码仍可继续使用，说明错误尝试没有消耗验证码。
         mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","code":"%s"}
-                                """.formatted(phone, code)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s","code":"%s"}
+                        """.formatted(phone, code)))
                 .andExpect(status().isOk());
 
         redisTemplate.delete(RedisKeys.authCode(phone));
         mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s","code":"%s"}
-                                """.formatted(phone, code)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s","code":"%s"}
+                        """.formatted(phone, code)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40010));
     }
@@ -97,10 +97,10 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
         }
 
         mockMvc.perform(post("/api/auth/code")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"13700000011"}
-                                """))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"13700000011"}
+                        """))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(42910));
     }
@@ -117,20 +117,20 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
         String phone = "13800000003";
         sendCode(phone);
         mockMvc.perform(post("/api/auth/code")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s"}
-                                """.formatted(phone)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s"}
+                        """.formatted(phone)))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(42910));
     }
 
     private String sendCode(String phone) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/code")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"phone":"%s"}
-                                """.formatted(phone)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"phone":"%s"}
+                        """.formatted(phone)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.code").isNotEmpty())
                 .andReturn();

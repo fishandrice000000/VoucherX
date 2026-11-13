@@ -32,11 +32,12 @@ public class OrderPersistenceService {
     private final TransactionDelay transactionDelay;
 
     public OrderPersistenceService(VoucherOrderMapper orderMapper,
-                                   SeckillVoucherMapper seckillVoucherMapper,
-                                   SeckillVoucherBucketMapper bucketMapper,
-                                   SeckillProperties properties,
-                                   TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger,com.voucherx.commerce.CommerceService commerce,com.voucherx.recovery.FaultInjector faults) {
-        this.faults=faults;
+            SeckillVoucherMapper seckillVoucherMapper,
+            SeckillVoucherBucketMapper bucketMapper,
+            SeckillProperties properties,
+            TransactionDelay transactionDelay, com.voucherx.fulfillment.RequestLedger ledger,
+            com.voucherx.commerce.CommerceService commerce, com.voucherx.recovery.FaultInjector faults) {
+        this.faults = faults;
         this.commerce = commerce;
         this.ledger = ledger;
         this.orderMapper = orderMapper;
@@ -56,8 +57,7 @@ public class OrderPersistenceService {
         }
 
         // 数据库组合唯一约束是最终一人一单保障；这里提前检查，减少无意义的库存扣减。
-        VoucherOrder existingUserOrder =
-                orderMapper.selectByVoucherAndUser(message.voucherId(), message.userId());
+        VoucherOrder existingUserOrder = orderMapper.selectByVoucherAndUser(message.voucherId(), message.userId());
         if (existingUserOrder != null) {
             throw new OrderBusinessException(OrderFailure.DUPLICATE_USER,
                     "该用户已存在同一活动订单");
@@ -94,17 +94,18 @@ public class OrderPersistenceService {
         order.setCompletedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
-        commerce.initializePurchase(order.getId(),message.voucherId());
-        ledger.succeed(message.requestId(),order.getId());
-        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT,message.requestId(),message.messageId());
+        commerce.initializePurchase(order.getId(), message.voucherId());
+        ledger.succeed(message.requestId(), order.getId());
+        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), message.messageId());
         return new OrderPersistResult(order.getId(), true);
     }
 
     @Transactional(rollbackFor = Exception.class)
     public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {
         // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
-        var results=messages.stream().map(this::persist).toList();
-        faults.hit(com.voucherx.recovery.FaultPoint.BATCH_BEFORE_COMMIT,messages.getFirst().requestId(),messages.getFirst().messageId());
+        var results = messages.stream().map(this::persist).toList();
+        faults.hit(com.voucherx.recovery.FaultPoint.BATCH_BEFORE_COMMIT, messages.getFirst().requestId(),
+                messages.getFirst().messageId());
         return results;
     }
 
@@ -117,7 +118,7 @@ public class OrderPersistenceService {
     }
 
     private Integer deductBucket(SeckillOrderMessage message, SeckillVoucher activity,
-                                 int layoutVersion) {
+            int layoutVersion) {
         int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
         if (bucketCount <= 0) {
             throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
@@ -154,7 +155,7 @@ public class OrderPersistenceService {
     }
 
     private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode,
-                                       int layoutVersion) {
+            int layoutVersion) {
         String messageMode = message.stockMode();
         if (activityMode == StockMode.SINGLE) {
             if (messageMode != null && !messageMode.isBlank()

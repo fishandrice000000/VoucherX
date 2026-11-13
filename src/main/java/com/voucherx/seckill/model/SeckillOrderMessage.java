@@ -14,10 +14,9 @@ public record SeckillOrderMessage(
         String stockMode,
         Integer startBucketNo,
         Integer layoutVersion,
-        long epoch
-) {
-    public SeckillOrderMessage(String messageId,String requestId,Long userId,Long voucherId,long createdAt,
-            String stockMode,Integer startBucketNo,Integer layoutVersion) {
-        this(messageId,requestId,userId,voucherId,createdAt,stockMode,startBucketNo,layoutVersion,1);
+        long epoch) {
+    public SeckillOrderMessage(String messageId, String requestId, Long userId, Long voucherId, long createdAt,
+            String stockMode, Integer startBucketNo, Integer layoutVersion) {
+        this(messageId, requestId, userId, voucherId, createdAt, stockMode, startBucketNo, layoutVersion, 1);
     }
 }

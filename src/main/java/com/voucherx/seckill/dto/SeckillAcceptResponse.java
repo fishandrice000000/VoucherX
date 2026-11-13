@@ -7,6 +7,5 @@ import com.voucherx.seckill.model.SeckillRequestStatus;
  */
 public record SeckillAcceptResponse(
         String requestId,
-        SeckillRequestStatus status
-) {
+        SeckillRequestStatus status) {
 }

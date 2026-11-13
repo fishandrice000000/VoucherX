@@ -44,11 +44,11 @@ class SeckillLocalAdmissionIntegrationTest extends AbstractIntegrationTest {
         String token2 = issueToken(2L);
 
         mockMvc.perform(post("/api/seckill/vouchers/{id}", VOUCHER_ID)
-                        .header("Authorization", "Bearer " + token1))
+                .header("Authorization", "Bearer " + token1))
                 .andExpect(status().isAccepted());
 
         mockMvc.perform(post("/api/seckill/vouchers/{id}", VOUCHER_ID)
-                        .header("Authorization", "Bearer " + token2))
+                .header("Authorization", "Bearer " + token2))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(42920));
 

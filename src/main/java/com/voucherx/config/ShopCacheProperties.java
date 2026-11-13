@@ -8,6 +8,5 @@ public record ShopCacheProperties(
         long ttlRandomSeconds,
         long nullTtlSeconds,
         long lockTtlSeconds,
-        long lockWaitMillis
-) {
+        long lockWaitMillis) {
 }

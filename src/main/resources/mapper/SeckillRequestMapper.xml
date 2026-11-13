@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.voucherx.fulfillment.mapper.SeckillRequestMapper">
+    <resultMap id="request" type="com.voucherx.fulfillment.RequestRecord">
+        <constructor>
+            <arg column="request_id" javaType="java.lang.String"/>
+            <arg column="event_id" javaType="java.lang.String"/>
+            <arg column="user_id" javaType="_long"/>
+            <arg column="voucher_id" javaType="_long"/>
+            <arg column="phase" javaType="java.lang.String"/>
+            <arg column="reservation" javaType="java.lang.String"/>
+            <arg column="epoch" javaType="_long"/>
+            <arg column="stock_mode" javaType="java.lang.String"/>
+            <arg column="start_bucket_no" javaType="_int"/>
+            <arg column="layout_version" javaType="_int"/>
+            <arg column="order_id" javaType="java.lang.Long"/>
+            <arg column="reason" javaType="java.lang.String"/>
+            <arg column="created_at_ms" javaType="_long"/>
+            <arg column="updated_at_ms" javaType="_long"/>
+        </constructor>
+    </resultMap>
+    <select id="find" resultMap="request" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_seckill_request WHERE request_id=#{id}
+        ]]>
+    </select>
+    <select id="byKey" resultMap="request" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_seckill_request WHERE user_id=#{userId} AND client_key=#{key}
+        ]]>
+    </select>
+    <select id="lock" resultMap="request" useCache="false">
+        <![CDATA[
+SELECT * FROM tb_seckill_request WHERE request_id=#{id} FOR UPDATE
+        ]]>
+    </select>
+    <insert id="insertIntent">
+        <![CDATA[
+INSERT INTO tb_seckill_request(request_id,event_id,user_id,voucher_id,client_key,
+ epoch,stock_mode,start_bucket_no,layout_version,created_at_ms,updated_at_ms)
+VALUES (#{id},#{eventId},#{user},#{voucher},#{key},#{epoch},#{mode},#{bucket},#{layout},#{now},#{now})
+        ]]>
+    </insert>
+    <update id="accept">
+        <![CDATA[
+UPDATE tb_seckill_request SET phase='ACCEPTED',reservation='RESERVED',updated_at_ms=#{now} WHERE request_id=#{id}
+        ]]>
+    </update>
+    <update id="succeed">
+        <![CDATA[
+UPDATE tb_seckill_request SET phase='SUCCEEDED',order_id=#{orderId},updated_at_ms=#{now} WHERE request_id=#{id} AND phase='ACCEPTED'
+        ]]>
+    </update>
+    <update id="rejectUnreserved">
+        <![CDATA[
+UPDATE tb_seckill_request SET phase='CLOSED',reservation='NONE',reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id}
+        ]]>
+    </update>
+    <update id="close">
+        <![CDATA[
+UPDATE tb_seckill_request SET phase='CLOSED',reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id}
+        ]]>
+    </update>
+    <update id="recordReason">
+        <![CDATA[
+UPDATE tb_seckill_request SET reason=#{reason},updated_at_ms=#{now} WHERE request_id=#{id} AND phase='ACCEPTED'
+        ]]>
+    </update>
+    <select id="countUnsettled" resultType="long" useCache="false">
+        <![CDATA[
+SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=#{voucherId} AND (phase IN ('INTENT','ACCEPTED') OR reservation IN ('RESERVED','UNKNOWN'))
+        ]]>
+    </select>
+</mapper>

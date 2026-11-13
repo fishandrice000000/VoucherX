@@ -18,22 +18,25 @@ import java.util.List;
  * 已有历史订单但 Redis 库存丢失时拒绝自动重建，避免按原始总库存重置导致超发。
  */
 @Component
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="voucherx.maintenance-mode",havingValue="false",matchIfMissing=true)
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)
 public class SeckillStockInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(SeckillStockInitializer.class);
 
-    private final org.springframework.jdbc.core.JdbcTemplate db;
+    private final com.voucherx.fulfillment.mapper.ActivityControlMapper controls;
+    private final com.voucherx.fulfillment.mapper.SeckillRequestMapper requests;
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
     private final VoucherOrderMapper orderMapper;
     private final SeckillStockService stockService;
 
     public SeckillStockInitializer(SeckillVoucherMapper seckillVoucherMapper,
-                                   SeckillVoucherBucketMapper bucketMapper,
-                                   VoucherOrderMapper orderMapper,
-                                   SeckillStockService stockService,org.springframework.jdbc.core.JdbcTemplate db) {
-        this.db=db;
+            SeckillVoucherBucketMapper bucketMapper,
+            VoucherOrderMapper orderMapper,
+            SeckillStockService stockService, com.voucherx.fulfillment.mapper.ActivityControlMapper controls,
+            com.voucherx.fulfillment.mapper.SeckillRequestMapper requests) {
+        this.controls = controls;
+        this.requests = requests;
         this.seckillVoucherMapper = seckillVoucherMapper;
         this.bucketMapper = bucketMapper;
         this.orderMapper = orderMapper;
@@ -73,14 +76,15 @@ public class SeckillStockInitializer implements ApplicationRunner {
 
     private boolean initializeIfSafe(SeckillVoucher activity) {
         Long voucherId = activity.getVoucherId();
-        db.update("INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (?)",voucherId);
+        controls.insertIfAbsent(voucherId);
         if (stockService.exists(voucherId)) {
             return true;
         }
 
-        Long pending=db.queryForObject("SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=? AND (phase IN ('INTENT','ACCEPTED') OR reservation IN ('RESERVED','UNKNOWN'))",Long.class,voucherId);
-        Long frozen=db.queryForObject("SELECT COUNT(*) FROM tb_activity_control WHERE voucher_id=? AND state<>'NORMAL'",Long.class,voucherId);
-        if(pending!=null && pending>0 || frozen!=null && frozen>0) return false;
+        Long pending = requests.countUnsettled(voucherId);
+        Long frozen = controls.countFrozen(voucherId);
+        if (pending != null && pending > 0 || frozen != null && frozen > 0)
+            return false;
         long existingOrders = orderMapper.countByVoucherId(voucherId);
         if (existingOrders != 0) {
             log.warn("Redis 秒杀库存缺失且已有历史订单，拒绝自动重建，voucherId={}, orders={}",
@@ -112,13 +116,14 @@ public class SeckillStockInitializer implements ApplicationRunner {
             log.warn("Redis 库存缺失且 MySQL 桶编号未连续覆盖，拒绝自动重建，voucherId={}, bucketCount={}, layout={}, stats={}",
                     voucherId, bucketCount, layoutVersion, layout == null ? "null"
                             : layout.getBucketCount() + "/" + layout.getMinBucketNo()
-                            + "/" + layout.getMaxBucketNo());
+                                    + "/" + layout.getMaxBucketNo());
             return false;
         }
         long bucketTotal = bucketMapper.sumTotal(voucherId, layoutVersion);
         long bucketRemaining = bucketMapper.sumRemaining(voucherId, layoutVersion);
         if (bucketTotal != activity.getTotalStock() || bucketRemaining != activity.getTotalStock()) {
-            log.warn("Redis 库存缺失且 MySQL 桶不满足未消费条件，拒绝自动重建，voucherId={}, totalStock={}, bucketTotal={}, bucketRemaining={}",
+            log.warn(
+                    "Redis 库存缺失且 MySQL 桶不满足未消费条件，拒绝自动重建，voucherId={}, totalStock={}, bucketTotal={}, bucketRemaining={}",
                     voucherId, activity.getTotalStock(), bucketTotal, bucketRemaining);
             return false;
         }

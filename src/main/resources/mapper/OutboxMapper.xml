@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.voucherx.fulfillment.mapper.OutboxMapper">
+    <insert id="insert">
+        <![CDATA[
+INSERT INTO tb_outbox(event_id,request_id,next_at_ms) VALUES (#{eventId},#{requestId},#{now})
+        ]]>
+    </insert>
+    <select id="dueEvents" resultType="string" useCache="false">
+        <![CDATA[
+SELECT o.event_id FROM tb_outbox o JOIN tb_seckill_request r ON o.request_id=r.request_id
+JOIN tb_activity_control c ON c.voucher_id=r.voucher_id
+WHERE c.state='NORMAL' AND c.epoch=r.epoch AND r.phase='ACCEPTED'
+AND ((o.state='PENDING' AND o.next_at_ms<=#{now}) OR (o.state='CLAIMED' AND o.lease_until_ms<=#{now}))
+ORDER BY o.next_at_ms LIMIT #{limit}
+        ]]>
+    </select>
+    <update id="claim">
+        <![CDATA[
+UPDATE tb_outbox SET state='CLAIMED',claim_token=#{token},lease_until_ms=#{leaseUntil},attempts=attempts+1
+WHERE event_id=#{id} AND ((state='PENDING' AND next_at_ms<=#{now}) OR (state='CLAIMED' AND lease_until_ms<=#{now}))
+        ]]>
+    </update>
+    <select id="findClaim" resultType="com.voucherx.fulfillment.OutboxClaim" useCache="false">
+        <![CDATA[
+SELECT request_id,attempts FROM tb_outbox WHERE event_id=#{id}
+        ]]>
+    </select>
+    <update id="finish">
+        <![CDATA[
+UPDATE tb_outbox SET state=#{state},last_result=#{result},next_at_ms=#{next},claim_token=NULL WHERE event_id=#{id} AND claim_token=#{token} AND state='CLAIMED'
+        ]]>
+    </update>
+    <update id="defer">
+        <![CDATA[
+UPDATE tb_outbox SET state=IF(attempts>=#{maxAttempts},'QUARANTINED','PENDING'),next_at_ms=#{next},last_result=#{reason},claim_token=NULL WHERE request_id=#{id}
+        ]]>
+    </update>
+    <update id="quarantine">
+        <![CDATA[
+UPDATE tb_outbox SET state='QUARANTINED',last_result=#{reason},claim_token=NULL WHERE request_id=#{id}
+        ]]>
+    </update>
+</mapper>

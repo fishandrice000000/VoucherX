@@ -48,7 +48,7 @@ class AuthIntegrationTest extends AbstractIntegrationTest {
 
         String tokenKey = RedisKeys.token(token);
         redisTemplate.expire(tokenKey, 5, TimeUnit.SECONDS);
-        mockMvc.perform(get("/api/auth/me").header("Authorization", token))
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
         assertThat(redisTemplate.getExpire(tokenKey, TimeUnit.SECONDS)).isGreaterThan(60);
 

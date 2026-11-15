@@ -8,7 +8,7 @@
 -- ARGV[3] 默认共享容量
 -- ARGV[4] 默认活动速率
 -- ARGV[5] 默认活动容量
--- ARGV[6] 模式：FIXED / ADAPTIVE（缺省按 FIXED 处理，兼容直接调用）
+-- ARGV[6] 模式：FIXED / ADAPTIVE（必须显式传入）
 -- 返回 1 放行；-1 共享桶不足；-2 活动桶不足；-3 策略缺失/过期；-4 非法策略。
 local function nowMillis()
     local t = redis.call('TIME')
@@ -92,7 +92,8 @@ if not validNumber(cost, false) then
     return -4
 end
 
-local mode = string.upper(ARGV[6] or 'FIXED')
+local mode = ARGV[6]
+if mode ~= 'FIXED' and mode ~= 'ADAPTIVE' then return -4 end
 local requireSharedPolicy = mode == 'ADAPTIVE'
 local sharedRate, sharedCapacity, sharedError = readPolicy(KEYS[2],
         tonumber(ARGV[2]), tonumber(ARGV[3]), requireSharedPolicy)

@@ -34,18 +34,18 @@ public class SeckillController {
     }
 
     /**
-     * 先做本地突发保护，再把已认证用户、活动 ID 和可选幂等键交给服务层。
+     * 先做本地突发保护，再把已认证用户、活动 ID 和必填幂等键交给服务层。
      *
      * @param voucherId
      *                      URL 中的活动 ID
      * @param key
-     *                      可选 Idempotency-Key；同一用户重试同一次抢券应复用它
+     *                      必填 Idempotency-Key；同一用户重试同一次抢券应复用它
      *
      * @return HTTP 202 响应，包含可查询的请求 ID 及 PROCESSING 或 UNKNOWN 等状态
      */
     @PostMapping("/vouchers/{voucherId}")
     public ResponseEntity<ApiResponse<SeckillAcceptResponse>> seckill(@PathVariable Long voucherId,
-            @org.springframework.web.bind.annotation.RequestHeader(value = "Idempotency-Key", required = false) String key) {
+            @org.springframework.web.bind.annotation.RequestHeader(value = "Idempotency-Key") String key) {
         // 认证拦截器已经执行；本地突发保护在数据库查询/Redis 预扣之前。
         admissionService.acquireLocal();
         SeckillAcceptResponse response = seckillService.seckill(UserContext.getRequired(), voucherId, key);

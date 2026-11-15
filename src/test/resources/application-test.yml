@@ -10,9 +10,6 @@ voucherx:
   auth:
     expose-code: true
     code-cooldown-seconds: 1
-  mq:
-    max-retries: 2
-    retry-ttl-millis: 800
   seckill:
     publish-confirm-timeout-millis: 5000
     bucket-attempts: 3

@@ -64,21 +64,7 @@ public class SeckillMessagePublisher {
      */
     public PublishResult publish(SeckillOrderMessage message) {
         return publishInternal(message, RabbitMqConfig.MAIN_EXCHANGE,
-                RabbitMqConfig.MAIN_ROUTING_KEY, 0);
-    }
-
-    /**
-     * 发布到配置了 TTL 的重试队列；当前消费者异常的主要重试入口是数据库 Outbox.defer。
-     *
-     * @param message
-     *                       保持原业务身份的消息
-     * @param retryCount
-     *                       写入消息头的重试次数
-     * @return 本次发布确认结果
-     */
-    public PublishResult publishRetry(SeckillOrderMessage message, int retryCount) {
-        return publishInternal(message, RabbitMqConfig.RETRY_EXCHANGE,
-                RabbitMqConfig.RETRY_ROUTING_KEY, retryCount);
+                RabbitMqConfig.MAIN_ROUTING_KEY);
     }
 
     /**
@@ -98,19 +84,17 @@ public class SeckillMessagePublisher {
      *                       本次目标交换机
      * @param routingKey
      *                       本次目标路由键
-     * @param retryCount
-     *                       写入消息头的重试次数
      * @return 本次发布尝试的结果分类
      * @throws IllegalStateException
      *                                   无法把消息编码为 JSON
      */
     private PublishResult publishInternal(SeckillOrderMessage message, String exchange,
-            String routingKey, int retryCount) {
+            String routingKey) {
         CorrelationData correlationData = new CorrelationData(UUID.randomUUID().toString());
 
         Message amqpMessage;
         try {
-            amqpMessage = buildMessage(message, retryCount);
+            amqpMessage = buildMessage(message);
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("秒杀消息序列化失败", ex);
         }
@@ -151,25 +135,22 @@ public class SeckillMessagePublisher {
     /**
      * 用 ObjectMapper 把 record 编码为 JSON 字节，设置 JSON/UTF-8 和 PERSISTENT 投递模式。
      * <p>
-     * AMQP 属性 messageId 与 JSON 内 messageId 都使用固定 E1；x-retry-count 是兼容重试头。
+     * AMQP 属性 messageId 与 JSON 内 messageId 都使用固定 E1；投递次数由数据库 Outbox 记录。
      * 持久化属性只是消息发布配置，不替代 Broker 确认、订单提交或消费者 ACK。
      *
      * @param payload
-     *                       由持久化请求生成的负载
-     * @param retryCount
-     *                       写入诊断消息头的次数
+     *                    由持久化请求生成的负载
      * @return 尚未发送的 AMQP 消息对象
      * @throws JsonProcessingException
      *                                     消息无法编码为 JSON
      */
-    private Message buildMessage(SeckillOrderMessage payload, int retryCount)
+    private Message buildMessage(SeckillOrderMessage payload)
             throws JsonProcessingException {
         MessageProperties messageProperties = new MessageProperties();
         messageProperties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         messageProperties.setContentEncoding("UTF-8");
         messageProperties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
         messageProperties.setMessageId(payload.messageId());
-        messageProperties.setHeader("x-retry-count", retryCount);
         byte[] body = objectMapper.writeValueAsBytes(payload);
         return new Message(body, messageProperties);
     }

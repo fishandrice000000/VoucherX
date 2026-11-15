@@ -94,7 +94,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
      *                       HTTP 测试或 JSON 转换失败
      */
     @Test
-    void typedResponsesPreserveDatabaseMapJsonContract() throws Exception {
+    void typedResponsesExposeCurrentJsonContract() throws Exception {
         long id = purchase();
         redisTemplate.opsForValue().set(RedisKeys.token("contract-token"), "1");
         var response = mockMvc.perform(get("/api/orders/PURCHASE/{id}", id)

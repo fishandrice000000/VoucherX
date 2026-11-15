@@ -76,13 +76,14 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 对缺少请求参数、无法读取请求体或参数类型不符返回统一格式错误提示。
+     * 对缺少必填请求头/参数、无法读取请求体或参数类型不符返回统一格式错误提示。
      *
      * @param ex
      *               Spring MVC 解析参数时的异常
      * @return HTTP 400 的统一错误响应
      */
-    @ExceptionHandler({ MissingServletRequestParameterException.class, HttpMessageNotReadableException.class,
+    @ExceptionHandler({ MissingServletRequestParameterException.class,
+            org.springframework.web.bind.MissingRequestHeaderException.class, HttpMessageNotReadableException.class,
             org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class })
     public ResponseEntity<ApiResponse<Void>> handleMalformedRequest(Exception ex) {
         return badRequest("请求参数格式不正确");

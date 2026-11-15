@@ -74,7 +74,7 @@ public final class RedisKeys {
     }
 
     /**
-     * 预留脚本 KEYS[5]：活动恢复门禁 Hash，保存 state 和 epoch；初始缺失时脚本按 NORMAL/1 解释。
+     * 预留脚本 KEYS[5]：活动恢复门禁 Hash，保存 state 和 epoch；由初始化器显式写入；缺失时脚本拒绝执行。
      *
      * @param id
      *               活动 ID

@@ -27,14 +27,4 @@ public enum PublishResult {
      */
     UNKNOWN;
 
-    /**
-     * 保留的发布结果分类辅助方法，把 RETURNED/NACKED/NOT_SENT 归为明确未成功入队一类。
-     * <p>
-     * 当前 Outbox 主线按 CONFIRMED 与其他结果分支，不使用本方法决定补偿；即使返回 true，也不能替代数据库关闭屏障释放预留。
-     *
-     * @return RETURNED、NACKED、NOT_SENT 时为 true
-     */
-    public boolean definitelyNotQueued() {
-        return this == RETURNED || this == NACKED || this == NOT_SENT;
-    }
 }

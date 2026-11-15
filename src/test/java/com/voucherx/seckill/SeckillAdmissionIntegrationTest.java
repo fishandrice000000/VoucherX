@@ -49,12 +49,12 @@ class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
         createUser(2);
         createActivity(VOUCHER_ID, 10, 10, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
 
-        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID);
+        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         assertThat(accepted.requestId()).isNotBlank();
 
-        assertThatThrownBy(() -> seckillService.seckill(2L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(2L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_BUSY));
 
@@ -78,11 +78,11 @@ class SeckillAdmissionIntegrationTest extends AbstractIntegrationTest {
         LocalDateTime end = LocalDateTime.now().plusHours(1);
         createActivity(VOUCHER_ID, 10, 10, begin, end);
         createActivity(OTHER_VOUCHER_ID, 10, 10, begin, end);
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
-        stockService.initializeIfAbsent(OTHER_VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
+        initializeRedisState(OTHER_VOUCHER_ID, 10);
 
-        seckillService.seckill(1L, VOUCHER_ID);
-        assertThatThrownBy(() -> seckillService.seckill(2L, OTHER_VOUCHER_ID))
+        seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
+        assertThatThrownBy(() -> seckillService.seckill(2L, OTHER_VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_BUSY));
 

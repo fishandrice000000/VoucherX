@@ -1,7 +1,9 @@
 package com.voucherx.seckill.service;
 
+import com.voucherx.common.redis.RedisKeys;
+import com.voucherx.fulfillment.mapper.ActivityControlMapper;
+import com.voucherx.fulfillment.mapper.SeckillRequestMapper;
 import com.voucherx.order.mapper.VoucherOrderMapper;
-import com.voucherx.voucher.entity.SeckillVoucher;
 import com.voucherx.voucher.entity.StockMode;
 import com.voucherx.voucher.mapper.SeckillVoucherBucketMapper;
 import com.voucherx.voucher.mapper.SeckillVoucherMapper;
@@ -9,158 +11,130 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-
-import java.util.List;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import java.util.Map;
 
 /**
- * 启动时只对“可以安全确定状态”的活动做 Redis 库存初始化。
- * 已有历史订单但 Redis 库存丢失时拒绝自动重建，避免按原始总库存重置导致超发。
+ * 在活动独占锁内，为可证明未消费的活动显式初始化 Redis 门禁及库存。
+ * <p>
+ * 正常请求和冻结恢复都受同一数据库控制行约束，初始化不能把冻结门禁覆盖为 NORMAL。
+ * Redis 与 MySQL 并不原子提交：先写完整 gate，再 SET NX 库存；仅 gate 成功时可以安全重试。
+ * 已有库存但门禁缺失或不一致时拒绝自动修复；已有订单或未结请求但库存缺失时应进入受控恢复。
  */
 @Component
-@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)
+@ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)
 public class SeckillStockInitializer implements ApplicationRunner {
-
     private static final Logger log = LoggerFactory.getLogger(SeckillStockInitializer.class);
+    private final ActivityControlMapper controls;
+    private final SeckillRequestMapper requests;
+    private final SeckillVoucherMapper activities;
+    private final SeckillVoucherBucketMapper buckets;
+    private final VoucherOrderMapper orders;
+    private final SeckillStockService stock;
+    private final StringRedisTemplate redis;
+    private final TransactionTemplate tx;
 
-    private final com.voucherx.fulfillment.mapper.ActivityControlMapper controls;
-    private final com.voucherx.fulfillment.mapper.SeckillRequestMapper requests;
-    private final SeckillVoucherMapper seckillVoucherMapper;
-    private final SeckillVoucherBucketMapper bucketMapper;
-    private final VoucherOrderMapper orderMapper;
-    private final SeckillStockService stockService;
-
-    public SeckillStockInitializer(SeckillVoucherMapper seckillVoucherMapper,
-            SeckillVoucherBucketMapper bucketMapper,
-            VoucherOrderMapper orderMapper,
-            SeckillStockService stockService, com.voucherx.fulfillment.mapper.ActivityControlMapper controls,
-            com.voucherx.fulfillment.mapper.SeckillRequestMapper requests) {
+    public SeckillStockInitializer(SeckillVoucherMapper activities, SeckillVoucherBucketMapper buckets,
+            VoucherOrderMapper orders, SeckillStockService stock, ActivityControlMapper controls,
+            SeckillRequestMapper requests, StringRedisTemplate redis, PlatformTransactionManager manager) {
+        this.activities = activities;
+        this.buckets = buckets;
+        this.orders = orders;
+        this.stock = stock;
         this.controls = controls;
         this.requests = requests;
-        this.seckillVoucherMapper = seckillVoucherMapper;
-        this.bucketMapper = bucketMapper;
-        this.orderMapper = orderMapper;
-        this.stockService = stockService;
+        this.redis = redis;
+        this.tx = new TransactionTemplate(manager);
     }
 
     /**
-     * 启动后逐个检查活动并尝试安全初始化；单个活动失败记日志，不阻断其他活动检查。
+     * 启动后逐个活动执行受事务保护的初始化；单个活动异常不阻断其他活动。
      *
      * @param args
-     *                 Spring Boot 启动参数；本流程不读取其内容
+     *                 启动参数；此流程不读取其内容
      */
     @Override
     public void run(ApplicationArguments args) {
-        List<SeckillVoucher> activities;
-        try {
-            activities = seckillVoucherMapper.selectList(null);
-        } catch (Exception ex) {
-            log.error("启动时读取秒杀活动失败，跳过 Redis 库存初始化", ex);
-            return;
-        }
-
-        for (SeckillVoucher activity : activities) {
+        for (var activity : activities.selectList(null)) {
             try {
-                initializeIfSafe(activity);
+                initializeSafely(activity.getVoucherId());
             } catch (Exception ex) {
-                log.error("初始化秒杀 Redis 库存异常，voucherId={}", activity.getVoucherId(), ex);
+                log.error("初始化秒杀 Redis 状态异常，voucherId={}", activity.getVoucherId(), ex);
             }
         }
     }
 
     /**
-     * 按活动 ID 加载配置后执行安全初始化；用于显式初始化或测试准备。
+     * 确认活动存在，再在事务内独占锁定控制行并重新读取活动配置。
+     * <p>
+     * NORMAL 活动已有完整且同代次的 gate/stock 时直接保留；否则仅允许无订单、无未结请求且库存未消费的活动补建库存。
+     * 缺失 gate 只允许与缺失库存一起初始化，禁止用数据库状态猜测已有 Redis 结构是否可信。
+     * 故障导致只写入 gate 时，重试会核对它再继续 SET NX 库存，不重置已有量。
      *
      * @param voucherId
      *                      活动 ID
-     * @return Redis 已存在或本次成功初始化为 true；活动不存在、条件不满足或写入失败为 false
+     * @return 状态完整或安全初始化成功为 true；配置、状态或基础设施不满足条件为 false
      */
     public boolean initializeSafely(Long voucherId) {
-        SeckillVoucher activity = seckillVoucherMapper.selectById(voucherId);
-        if (activity == null) {
+        if (activities.selectById(voucherId) == null)
+            return false;
+        try {
+            return Boolean.TRUE.equals(tx.execute(status -> {
+                controls.insertIfAbsent(voucherId);
+                var control = controls.lockExclusive(voucherId);
+                if (control == null || !"NORMAL".equals(control.state()) || control.epoch() < 1)
+                    return false;
+                var activity = activities.selectById(voucherId);
+                if (activity == null)
+                    return false;
+                StockMode mode;
+                try {
+                    mode = StockMode.requireLayout(activity);
+                } catch (IllegalArgumentException ex) {
+                    log.warn("库存布局不合法，拒绝初始化，voucherId={}", voucherId);
+                    return false;
+                }
+                var gate = redis.opsForHash().entries(RedisKeys.seckillGate(voucherId));
+                boolean stockExists = stock.exists(voucherId);
+                if (gate.isEmpty()) {
+                    if (stockExists)
+                        return false;
+                } else if (!"NORMAL".equals(gate.get("state"))
+                        || !String.valueOf(control.epoch()).equals(gate.get("epoch")))
+                    return false;
+                if (stockExists)
+                    return true;
+                if (requests.countUnsettled(voucherId) > 0 || orders.countByVoucherId(voucherId) > 0)
+                    return false;
+                long remaining;
+                if (mode == StockMode.SINGLE) {
+                    if (!activity.getStock().equals(activity.getTotalStock()))
+                        return false;
+                    remaining = activity.getStock();
+                } else {
+                    int layout = activity.getLayoutVersion();
+                    var stats = buckets.selectLayoutStats(voucherId, layout);
+                    if (stats == null || !stats.covers(activity.getBucketCount())
+                            || buckets.sumTotal(voucherId, layout) != activity.getTotalStock())
+                        return false;
+                    remaining = buckets.sumRemaining(voucherId, layout);
+                    if (remaining != activity.getTotalStock())
+                        return false;
+                }
+                if (remaining < 0 || remaining > Integer.MAX_VALUE)
+                    return false;
+                redis.opsForHash().putAll(RedisKeys.seckillGate(voucherId),
+                        Map.of("state", "NORMAL", "epoch", String.valueOf(control.epoch())));
+                return stock.initializeIfAbsent(voucherId, (int) remaining);
+            }));
+        } catch (DataAccessException ex) {
+            log.warn("初始化活动状态失败，保留现状待重试，voucherId={}", voucherId, ex);
             return false;
         }
-        return initializeIfSafe(activity);
-    }
-
-    /**
-     * 只为可确认未消费的活动补建缺失的 Redis 总库存，不负责创建 MySQL 桶布局。
-     * <p>
-     * 先保证控制行存在；Redis 键存在则直接保留。缺失时拒绝有未结请求、非 NORMAL 控制状态或历史订单的活动。
-     * SINGLE 要求当前 stock 等于 total_stock；BUCKET 要求正桶数、连续覆盖，且桶初始量合计、剩余量合计都等于活动总量。
-     * BUCKET 使用桶汇总作为初始额度，不能拿活动表的 stock 充当权威桶余量。
-     * <p>
-     * 最后通过 SET NX 创建键，避免覆盖并发已写入的值；检查历史与写 Redis 不是一个跨存储原子事务。
-     * 这不是已有业务的在线重建入口；不能证明初始状态时返回 false，需另走受控恢复。
-     *
-     * @param activity
-     *                     从 MySQL 读取的活动配置
-     * @return 已观察到 Redis 键存在，或本次安全初始化写入成功时为 true；条件不满足或 SET NX 未写入为 false
-     * @see com.voucherx.voucher.model.BucketLayoutStats#covers(int)
-     * @see SeckillStockService#initializeIfAbsent(Long, int)
-     */
-    private boolean initializeIfSafe(SeckillVoucher activity) {
-        Long voucherId = activity.getVoucherId();
-        controls.insertIfAbsent(voucherId);
-        if (stockService.exists(voucherId)) {
-            return true;
-        }
-
-        Long pending = requests.countUnsettled(voucherId);
-        Long frozen = controls.countFrozen(voucherId);
-        if (pending != null && pending > 0 || frozen != null && frozen > 0)
-            return false;
-        long existingOrders = orderMapper.countByVoucherId(voucherId);
-        if (existingOrders != 0) {
-            log.warn("Redis 秒杀库存缺失且已有历史订单，拒绝自动重建，voucherId={}, orders={}",
-                    voucherId, existingOrders);
-            return false;
-        }
-
-        StockMode mode = StockMode.parse(activity.getStockMode());
-        int layoutVersion = activity.getLayoutVersion() == null ? 1 : activity.getLayoutVersion();
-
-        if (mode == StockMode.SINGLE) {
-            boolean untouched = activity.getStock().equals(activity.getTotalStock());
-            if (!untouched) {
-                log.warn("Redis 单库存缺失且数据库库存已被改动，拒绝自动重建，voucherId={}, stock={}, totalStock={}",
-                        voucherId, activity.getStock(), activity.getTotalStock());
-                return false;
-            }
-            boolean initialized = stockService.initializeIfAbsent(voucherId, activity.getStock());
-            if (initialized) {
-                log.info("已初始化秒杀 Redis 单库存，voucherId={}, stock={}",
-                        voucherId, activity.getStock());
-            }
-            return initialized;
-        }
-
-        int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
-        var layout = bucketMapper.selectLayoutStats(voucherId, layoutVersion);
-        if (bucketCount <= 0 || layout == null || !layout.covers(bucketCount)) {
-            log.warn("Redis 库存缺失且 MySQL 桶编号未连续覆盖，拒绝自动重建，voucherId={}, bucketCount={}, layout={}, stats={}",
-                    voucherId, bucketCount, layoutVersion, layout == null ? "null"
-                            : layout.getBucketCount() + "/" + layout.getMinBucketNo()
-                                    + "/" + layout.getMaxBucketNo());
-            return false;
-        }
-        long bucketTotal = bucketMapper.sumTotal(voucherId, layoutVersion);
-        long bucketRemaining = bucketMapper.sumRemaining(voucherId, layoutVersion);
-        if (bucketTotal != activity.getTotalStock() || bucketRemaining != activity.getTotalStock()) {
-            log.warn(
-                    "Redis 库存缺失且 MySQL 桶不满足未消费条件，拒绝自动重建，voucherId={}, totalStock={}, bucketTotal={}, bucketRemaining={}",
-                    voucherId, activity.getTotalStock(), bucketTotal, bucketRemaining);
-            return false;
-        }
-        if (bucketRemaining > Integer.MAX_VALUE) {
-            log.warn("MySQL 桶库存超出 Redis 初始化支持范围，voucherId={}", voucherId);
-            return false;
-        }
-        boolean initialized = stockService.initializeIfAbsent(voucherId, (int) bucketRemaining);
-        if (initialized) {
-            log.info("已初始化秒杀 Redis 库存（MySQL 桶模式），voucherId={}, stock={}, buckets={}",
-                    voucherId, bucketRemaining, bucketCount);
-        }
-        return initialized;
     }
 }

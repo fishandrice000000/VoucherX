@@ -250,7 +250,7 @@ public class RequestLedger {
      * <p>
      * 按活动与请求锁检查身份、非终态、正常状态和 epoch，然后按已有 attempts 写 PENDING 或次数用尽后的 QUARANTINED，
      * 下次时间为当前时刻加固定 retryMillis，并清空发送认领令牌。
-     * 请求保留受理和预留，eventId 不变；不是生成新的业务请求，也不使用旧的 TTL 重试队列。
+     * 请求保留受理和预留，eventId 不变；重试依据统一保存于 Outbox，不生成新的业务请求。
      * <p>
      * 消费者等此调用正常返回后才 NACK 原交付。检查不满足会直接返回，不能单凭 void 返回就认定必定产生了新重试写入。
      *

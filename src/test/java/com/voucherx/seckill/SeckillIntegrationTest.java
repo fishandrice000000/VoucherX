@@ -107,9 +107,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(1);
         LocalDateTime now = LocalDateTime.now();
         createActivity(VOUCHER_ID, 10, 10, now.plusHours(1), now.plusHours(2));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
 
-        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_NOT_STARTED));
         assertThat(stockService.stock(VOUCHER_ID)).isEqualTo(10L);
@@ -123,9 +123,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(1);
         LocalDateTime now = LocalDateTime.now();
         createActivity(VOUCHER_ID, 10, 10, now.minusHours(2), now.minusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
 
-        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_ENDED));
     }
@@ -138,14 +138,14 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(1);
         LocalDateTime now = LocalDateTime.now();
         createActivity(VOUCHER_ID, 10, 0, now.minusHours(1), now.plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 0);
+        initializeRedisState(VOUCHER_ID, 0);
 
-        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_SOLD_OUT));
 
         redisTemplate.delete("voucherx:seckill:stock:" + VOUCHER_ID);
-        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_STOCK_UNAVAILABLE));
     }
@@ -158,13 +158,13 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(1);
         createActivity(VOUCHER_ID, 2, 2, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 2);
+        initializeRedisState(VOUCHER_ID, 2);
 
-        SeckillAcceptResponse first = seckillService.seckill(1L, VOUCHER_ID);
+        SeckillAcceptResponse first = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         assertThat(first.status()).isEqualTo(SeckillRequestStatus.PROCESSING);
         awaitOrderCount(1);
 
-        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID))
+        assertThatThrownBy(() -> seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString()))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.SECKILL_DUPLICATE));
 
@@ -181,9 +181,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(2);
         createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        initializeRedisState(VOUCHER_ID, 1);
 
-        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID);
+        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
             SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
             assertThat(status.status()).isEqualTo(SeckillRequestStatus.SUCCESS);
@@ -214,23 +214,25 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createUser(1);
         createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        initializeRedisState(VOUCHER_ID, 1);
 
-        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID);
+        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         awaitOrderCount(1);
         String requestId = accepted.requestId();
         var existing = orderMapper.selectByRequestId(requestId);
 
         SeckillOrderMessage duplicate = new SeckillOrderMessage(
                 existing.getMessageId(), requestId, 1L, VOUCHER_ID,
-                System.currentTimeMillis(), "SINGLE", 0, 1);
+                System.currentTimeMillis(), "SINGLE", 0, 1, 1);
         assertThat(publisher.publish(duplicate).name()).isEqualTo("CONFIRMED");
         assertThat(publisher.publish(duplicate).name()).isEqualTo("CONFIRMED");
 
         Thread.sleep(1200);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isEqualTo(1);
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isZero();
-        assertThat(statusStore.find(requestId).get("status")).isEqualTo("SUCCESS");
+        assertThat(
+                redisTemplate.<String, String>opsForHash().entries(RedisKeys.seckillRequest(requestId)).get("status"))
+                .isEqualTo("SUCCESS");
     }
 
     /**
@@ -240,13 +242,13 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     void unroutableMessageKeepsDurableAcceptanceAndReservationForRetry() {
         createUser(1);
         createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        initializeRedisState(VOUCHER_ID, 1);
         Binding binding = new Binding(RabbitMqConfig.MAIN_QUEUE, Binding.DestinationType.QUEUE,
                 RabbitMqConfig.MAIN_EXCHANGE, RabbitMqConfig.MAIN_ROUTING_KEY, null);
         rabbitAdmin.removeBinding(binding);
         SeckillAcceptResponse accepted;
         try {
-            accepted = seckillService.seckill(1L, VOUCHER_ID);
+            accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
             assertThat(accepted.status()).isEqualTo(SeckillRequestStatus.PROCESSING);
             dispatcher.dispatch();
             assertThat(ledger.find(accepted.requestId()).phase()).isEqualTo("ACCEPTED");
@@ -268,16 +270,16 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     void releaseIsIdempotent() {
         createActivity(VOUCHER_ID, 5, 5, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 5);
+        initializeRedisState(VOUCHER_ID, 5);
 
         String requestId = UUID.randomUUID().toString();
         long now = System.currentTimeMillis();
         long begin = now - 3_600_000L;
         long end = now + 3_600_000L;
-        assertThat(stockService.reserve(VOUCHER_ID, 1L, requestId, now, begin, end, "SINGLE", 0, 1)).isEqualTo(4L);
+        assertThat(stockService.reserve(VOUCHER_ID, 1L, requestId, now, begin, end, "SINGLE", 0, 1, 1)).isEqualTo(4L);
 
-        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST")).isTrue();
-        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST")).isTrue();
+        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST", 1)).isTrue();
+        assertThat(stockService.release(VOUCHER_ID, 1L, requestId, "TEST", 1)).isTrue();
         assertThat(stockService.stock(VOUCHER_ID)).isEqualTo(5L);
     }
 
@@ -295,6 +297,10 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         first.setUserId(1L);
         first.setVoucherId(VOUCHER_ID);
         first.setStatus(VoucherOrder.STATUS_CREATED);
+        first.setStockMode("SINGLE");
+        first.setBucketNo(0);
+        first.setLayoutVersion(1);
+        first.setCompletedAtMs(System.currentTimeMillis());
         orderMapper.insert(first);
 
         VoucherOrder duplicate = new VoucherOrder();
@@ -303,6 +309,10 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         duplicate.setUserId(1L);
         duplicate.setVoucherId(VOUCHER_ID);
         duplicate.setStatus(VoucherOrder.STATUS_CREATED);
+        duplicate.setStockMode("SINGLE");
+        duplicate.setBucketNo(0);
+        duplicate.setLayoutVersion(1);
+        duplicate.setCompletedAtMs(System.currentTimeMillis());
 
         assertThatThrownBy(() -> orderMapper.insert(duplicate))
                 .isInstanceOf(DuplicateKeyException.class);
@@ -310,49 +320,30 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 直接操作 Redis 请求状态，验证迟到的处理中/未知或失败更新不能覆盖已成功、已失败或已释放的保护状态；UNKNOWN 仍可被后续成功核对推进。
+     * 直接验证终态 Lua：成功不可被失败覆盖，已释放不可被失败覆盖，失败可由数据库成功事实纠正。
      */
     @Test
-    void lateEntryStatusCannotOverwriteTerminalState() {
-        createActivity(VOUCHER_ID, 10, 10, LocalDateTime.now().minusHours(1),
-                LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+    void terminalStatusUpdatesProtectSuccessAndReleasedReservations() {
+        createActivity(VOUCHER_ID, 10, 10, LocalDateTime.now().minusHours(1), LocalDateTime.now().plusHours(1));
+        initializeRedisState(VOUCHER_ID, 10);
         long now = System.currentTimeMillis();
-        long begin = now - 3_600_000L;
-        long end = now + 3_600_000L;
-
-        String successRequest = UUID.randomUUID().toString();
-        stockService.reserve(VOUCHER_ID, 1L, successRequest, now, begin, end, "SINGLE", 0, 1);
-        statusStore.markSuccess(successRequest, "message-success", 123L);
-        statusStore.markProcessing(successRequest, "message-late");
-        statusStore.markUnknown(successRequest, "message-late", "LATE");
-        statusStore.markFailed(successRequest, "message-late", "LATE");
-        assertThat(statusStore.find(successRequest))
-                .containsEntry("status", "SUCCESS")
-                .containsEntry("orderId", "123");
-
-        String failedRequest = UUID.randomUUID().toString();
-        stockService.reserve(VOUCHER_ID, 2L, failedRequest, now, begin, end, "SINGLE", 0, 1);
-        statusStore.markFailed(failedRequest, "message-failed", "SOLD_OUT");
-        statusStore.markProcessing(failedRequest, "message-late");
-        statusStore.markUnknown(failedRequest, "message-late", "LATE");
-        assertThat(statusStore.find(failedRequest)).containsEntry("status", "FAILED");
-
-        String unknownRequest = UUID.randomUUID().toString();
-        stockService.reserve(VOUCHER_ID, 3L, unknownRequest, now, begin, end, "SINGLE", 0, 1);
-        statusStore.markUnknown(unknownRequest, "message-unknown", "PUBLISH_CONFIRM_UNKNOWN");
-        statusStore.markProcessing(unknownRequest, "message-late");
-        assertThat(statusStore.find(unknownRequest)).containsEntry("status", "UNKNOWN");
-        statusStore.markSuccess(unknownRequest, "message-success", 456L);
-        assertThat(statusStore.find(unknownRequest))
-                .containsEntry("status", "SUCCESS")
-                .containsEntry("orderId", "456");
-
-        String releasedRequest = UUID.randomUUID().toString();
-        stockService.reserve(VOUCHER_ID, 4L, releasedRequest, now, begin, end, "SINGLE", 0, 1);
-        assertThat(stockService.release(VOUCHER_ID, 4L, releasedRequest, "TEST")).isTrue();
-        statusStore.markProcessing(releasedRequest, "message-late");
-        assertThat(statusStore.find(releasedRequest)).containsEntry("status", "RELEASED");
+        for (long user = 1; user <= 3; user++) {
+            String id = "terminal-" + user;
+            stockService.reserve(VOUCHER_ID, user, id, now, now - 3600000, now + 3600000, "SINGLE", 0, 1, 1);
+        }
+        statusStore.markSuccess("terminal-1", "event-1", 123L);
+        statusStore.markFailed("terminal-1", "late", "LATE");
+        assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest("terminal-1"), "status"))
+                .isEqualTo("SUCCESS");
+        statusStore.markFailed("terminal-2", "event-2", "FAILED");
+        statusStore.markSuccess("terminal-2", "event-2", 456L);
+        assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest("terminal-2"), "status"))
+                .isEqualTo("SUCCESS");
+        assertThat(stockService.release(VOUCHER_ID, 3L, "terminal-3", "TEST", 1)).isTrue();
+        statusStore.markFailed("terminal-3", "late", "LATE");
+        assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest("terminal-3"), "status"))
+                .isEqualTo("RELEASED");
+        assertThat(redisTemplate.getExpire(RedisKeys.seckillRequest("terminal-3"))).isEqualTo(-1L);
     }
 
     /**
@@ -391,10 +382,10 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(bucketsWithOne).isEqualTo(5);
         assertThat(emptyBuckets).isEqualTo(3);
 
-        stockService.initializeIfAbsent(VOUCHER_ID, 5);
+        initializeRedisState(VOUCHER_ID, 5);
         // 用户 1..4 与 8 的起始桶分别为 1..4 和 0，恰好覆盖 5 个非空桶。
         for (long userId : new long[] { 1, 2, 3, 4, 8 }) {
-            seckillService.seckill(userId, VOUCHER_ID);
+            seckillService.seckill(userId, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         }
         awaitOrderCount(5);
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isZero();
@@ -422,8 +413,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         jdbcTemplate.update("""
                 INSERT INTO tb_voucher_order
                     (request_id, message_id, user_id, voucher_id, stock_mode,
-                     bucket_no, layout_version, status)
-                VALUES (?, ?, ?, ?, 'BUCKET', 0, 1, 1)
+                     bucket_no, layout_version, status, completed_at_ms)
+                VALUES (?, ?, ?, ?, 'BUCKET', 0, 1, 1, 100)
                 """, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
                 1L, VOUCHER_ID);
 
@@ -477,7 +468,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(stockInitializer.initializeSafely(VOUCHER_ID)).isFalse();
         assertThat(stockService.stock(VOUCHER_ID)).isNull();
 
-        stockService.initializeIfAbsent(VOUCHER_ID, 100);
+        initializeRedisState(VOUCHER_ID, 100);
         SeckillOrderMessage message = bucketMessage(1L, VOUCHER_ID, 0, 1, "BUCKET");
         assertThatThrownBy(() -> orderPersistenceService.persist(message))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
@@ -539,11 +530,11 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     void bucketSkewedUsersUseBoundedCrossBucketAttempts() {
         createBucketActivity(VOUCHER_ID, 10, 3, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
 
         // 10 个用户都从桶 0 开始，桶 0 只有 4 张；最多尝试 3 个桶：0/1/2。
         for (long userId : new long[] { 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 }) {
-            seckillService.seckill(userId, VOUCHER_ID);
+            seckillService.seckill(userId, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         }
         awaitOrderCount(10);
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isZero();
@@ -557,16 +548,16 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     void bucketDuplicateMessageDoesNotDeductBucketAgain() {
         createBucketActivity(VOUCHER_ID, 1, 4, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        initializeRedisState(VOUCHER_ID, 1);
 
         // 用户 4 的起始桶为 0，桶 0 分配到了唯一一张库存。
-        SeckillAcceptResponse accepted = seckillService.seckill(4L, VOUCHER_ID);
+        SeckillAcceptResponse accepted = seckillService.seckill(4L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         awaitOrderCount(1);
         VoucherOrder order = orderMapper.selectByRequestId(accepted.requestId());
 
         SeckillOrderMessage duplicate = new SeckillOrderMessage(
                 order.getMessageId(), accepted.requestId(), 4L, VOUCHER_ID,
-                System.currentTimeMillis(), "BUCKET", 0, 1);
+                System.currentTimeMillis(), "BUCKET", 0, 1, 1);
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
 
@@ -594,7 +585,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         // 4/8 桶的边界和局部售罄由其他用例覆盖。
         createBucketActivity(VOUCHER_ID, stock, 3, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, stock);
+        initializeRedisState(VOUCHER_ID, stock);
 
         AtomicInteger accepted = new AtomicInteger();
         AtomicInteger unexpected = new AtomicInteger();
@@ -608,7 +599,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                 futures.add(executor.submit(() -> {
                     try {
                         start.await();
-                        seckillService.seckill(finalUserId, VOUCHER_ID);
+                        seckillService.seckill(finalUserId, VOUCHER_ID, java.util.UUID.randomUUID().toString());
                         accepted.incrementAndGet();
                     } catch (BusinessException ex) {
                         if (ex.errorCode() != ErrorCode.SECKILL_SOLD_OUT) {
@@ -681,7 +672,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         insertUsers(userCount);
         createActivity(VOUCHER_ID, stock, stock, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, stock);
+        initializeRedisState(VOUCHER_ID, stock);
 
         AtomicInteger accepted = new AtomicInteger();
         ConcurrentHashMap<ErrorCode, AtomicInteger> rejected = new ConcurrentHashMap<>();
@@ -697,7 +688,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                 futures.add(executor.submit(() -> {
                     try {
                         start.await();
-                        seckillService.seckill(finalUserId, VOUCHER_ID);
+                        seckillService.seckill(finalUserId, VOUCHER_ID, java.util.UUID.randomUUID().toString());
                         accepted.incrementAndGet();
                     } catch (BusinessException ex) {
                         rejected.computeIfAbsent(ex.errorCode(), k -> new AtomicInteger())

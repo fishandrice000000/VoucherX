@@ -5,7 +5,7 @@ import org.apache.ibatis.annotations.Param;
 import com.voucherx.fulfillment.ActivityGate.Control;
 
 /**
- * 活动控制行的普通读取与共享锁访问；冻结恢复使用该控制行协调并发。
+ * 活动控制行的普通读取与共享/独占锁访问；冻结恢复使用该控制行协调并发。
  * <p>
  * SQL 位于同名 XML；Mapper 不自行开启业务事务。返回更新行数的方法仅描述写入结果，调用者负责所需的状态检查和行锁。
  */
@@ -42,6 +42,15 @@ public interface ActivityControlMapper {
     Control lockShared(@Param("voucherId") long voucherId);
 
     /**
+     * 初始化时独占锁定活动控制行，与受理、建单以及冻结恢复互斥。
+     *
+     * @param voucherId
+     *                      活动 ID
+     * @return 当前状态及代次；锁持续至服务层事务结束
+     */
+    Control lockExclusive(@Param("voucherId") long voucherId);
+
+    /**
      * 普通查询指定活动是否 NORMAL 且 epoch 匹配；这是瞬时检查。
      *
      * @param voucherId
@@ -53,13 +62,4 @@ public interface ActivityControlMapper {
      */
     boolean isNormal(@Param("voucherId") long voucherId, @Param("epoch") long epoch);
 
-    /**
-     * 统计该活动是否存在非 NORMAL 控制行，供安全初始化拒绝自动重建。
-     *
-     * @param voucherId
-     *                      活动 ID
-     *
-     * @return 非 NORMAL 时为 1，否则为 0
-     */
-    long countFrozen(@Param("voucherId") long voucherId);
 }

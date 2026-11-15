@@ -75,7 +75,6 @@ voucherx:
     lock-wait-millis: 3000
   seckill:
     publish-confirm-timeout-millis: 5000
-    request-status-ttl-seconds: 86400
     # MySQL BUCKET 模式单次消费最多尝试的桶数，避免无限遍历。
     bucket-attempts: 3
   admission:
@@ -107,9 +106,6 @@ voucherx:
       health-windows: ${ADMISSION_HEALTH_WINDOWS:3}
       cooldown-millis: ${ADMISSION_COOLDOWN_MS:10000}
       policy-ttl-millis: ${ADMISSION_CONTROLLER_POLICY_TTL_MS:10000}
-  mq:
-    max-retries: 3
-    retry-ttl-millis: 5000
   delivery:
     enabled: ${DELIVERY_ENABLED:true}
     interval-millis: 250

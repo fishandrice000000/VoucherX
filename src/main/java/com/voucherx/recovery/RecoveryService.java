@@ -302,8 +302,9 @@ public class RecoveryService {
         var activity = activities.selectById(voucher);
         if (activity == null)
             throw new org.springframework.dao.EmptyResultDataAccessException(1);
+        var mode = com.voucherx.voucher.entity.StockMode.requireLayout(activity);
         long remaining;
-        if ("BUCKET".equals(activity.getStockMode())) {
+        if (mode == com.voucherx.voucher.entity.StockMode.BUCKET) {
             int layout = activity.getLayoutVersion();
             int count = activity.getBucketCount();
             var stats = buckets.selectLayoutStats(voucher, layout);
@@ -311,10 +312,8 @@ public class RecoveryService {
                     || buckets.sumTotal(voucher, layout) != activity.getTotalStock())
                 throw new IllegalStateException("MySQL 库存桶布局不完整");
             remaining = buckets.sumRemaining(voucher, layout);
-        } else if ("SINGLE".equals(activity.getStockMode()))
+        } else
             remaining = activity.getStock();
-        else
-            throw new IllegalStateException("未知库存模式");
         long confirmed = mapper.countConfirmed(voucher);
         long reserved = mapper.countReserved(voucher);
         return RecoveryPlan.calculate(activity.getTotalStock(), remaining, confirmed, reserved);

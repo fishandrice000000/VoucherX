@@ -20,22 +20,38 @@ public enum StockMode {
     BUCKET;
 
     /**
-     * 解析数据库库存模式；空值、空白或未知值均回退 SINGLE，非空值转大写后匹配。
-     * <p>
-     * 这里只解释配置值，不创建桶，也不检查布局是否完整；不主动去掉非空字符串首尾的空格。
+     * 读取明确的库存模式，不补齐空值，不容忍未知值或大小写变体。
      *
      * @param value
-     *                  活动 stock_mode 字段
-     * @return 可识别的模式，或兼容回退的 SINGLE
+     *                  活动或消息中的模式，必须为 SINGLE 或 BUCKET
+     * @return 对应的库存策略标识
+     * @throws IllegalArgumentException
+     *                                      模式缺失或非法
      */
     public static StockMode parse(String value) {
-        if (value == null || value.isBlank()) {
-            return SINGLE;
-        }
-        try {
-            return StockMode.valueOf(value.toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            return SINGLE;
-        }
+        if (!"SINGLE".equals(value) && !"BUCKET".equals(value))
+            throw new IllegalArgumentException("库存模式必须为 SINGLE 或 BUCKET");
+        return valueOf(value);
+    }
+
+    /**
+     * 校验活动的完整布局，再返回模式；入口、初始化、建单和恢复使用相同规则。
+     * <p>
+     * SINGLE 的桶数必须为 1，BUCKET 的桶数必须为正，布局版本必须为正。
+     * BUCKET 的真实桶号覆盖和额度守恒由各自持锁的数据库流程继续检查。
+     *
+     * @param activity
+     *                     当前活动配置
+     * @return 已通过基础布局检查的模式
+     * @throws IllegalArgumentException
+     *                                      模式、桶数或版本缺失或非法
+     */
+    public static StockMode requireLayout(SeckillVoucher activity) {
+        StockMode mode = parse(activity.getStockMode());
+        if (activity.getBucketCount() == null || activity.getBucketCount() < 1
+                || mode == SINGLE && activity.getBucketCount() != 1
+                || activity.getLayoutVersion() == null || activity.getLayoutVersion() < 1)
+            throw new IllegalArgumentException("库存桶数或布局版本不合法");
+        return mode;
     }
 }

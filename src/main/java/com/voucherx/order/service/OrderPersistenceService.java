@@ -89,8 +89,13 @@ public class OrderPersistenceService {
                     "秒杀活动不存在");
         }
 
-        StockMode activityMode = StockMode.parse(activity.getStockMode());
-        int layoutVersion = activity.getLayoutVersion() == null ? 1 : activity.getLayoutVersion();
+        StockMode activityMode;
+        try {
+            activityMode = StockMode.requireLayout(activity);
+        } catch (IllegalArgumentException ex) {
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH, "活动库存布局不合法");
+        }
+        int layoutVersion = activity.getLayoutVersion();
         validateMessageLayout(message, activityMode, layoutVersion);
 
         Integer actualBucket = activityMode == StockMode.BUCKET
@@ -197,7 +202,7 @@ public class OrderPersistenceService {
      */
     private Integer deductBucket(SeckillOrderMessage message, SeckillVoucher activity,
             int layoutVersion) {
-        int bucketCount = activity.getBucketCount() == null ? 0 : activity.getBucketCount();
+        int bucketCount = activity.getBucketCount();
         if (bucketCount <= 0) {
             throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
                     "库存桶数量不合法");
@@ -208,9 +213,7 @@ public class OrderPersistenceService {
                     "库存桶编号未连续覆盖 0..bucketCount-1");
         }
 
-        int startBucket = message.startBucketNo() == null
-                ? Math.floorMod(message.userId(), bucketCount)
-                : message.startBucketNo();
+        int startBucket = message.startBucketNo();
         if (startBucket < 0 || startBucket >= bucketCount) {
             throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
                     "消息中的库存桶不属于该活动布局");
@@ -233,48 +236,25 @@ public class OrderPersistenceService {
     }
 
     /**
-     * 核对消息库存模式和布局是否可用于当前活动；不扣减库存。
+     * 要求消息显式声明当前模式、正布局版本及有效起始桶，不补齐缺失字段。
      * <p>
-     * SINGLE 在本层允许缺失/空白模式以及 null/0 版本，显式值则必须匹配。
-     * BUCKET 必须明确声明 BUCKET 且版本一致，不能把旧单库存消息解释为桶请求。
-     * <p>
-     * 这些是本方法的局部兼容规则；正常 persist 还会先经过账本守卫逐项比较消息身份和布局。
-     * 桶编号范围及完整覆盖另在 deductBucket 中检查。
+     * 账本守卫已先核对持久化身份；此处再确认消息与当前活动配置一致。
+     * SINGLE 的起点只能为 0，BUCKET 的起点范围和完整桶布局另在扣减时校验。
      *
      * @param message
-     *                          待验证的业务消息
+     *                          本次业务消息
      * @param activityMode
-     *                          从数据库解析出的当前模式
+     *                          已校验的活动库存模式
      * @param layoutVersion
-     *                          数据库当前布局版本
+     *                          活动布局版本
      * @throws OrderBusinessException
-     *                                    模式或布局版本不匹配
+     *                                    消息字段缺失或与活动布局不匹配
      */
-    private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode,
-            int layoutVersion) {
-        String messageMode = message.stockMode();
-        if (activityMode == StockMode.SINGLE) {
-            if (messageMode != null && !messageMode.isBlank()
-                    && !StockMode.SINGLE.name().equalsIgnoreCase(messageMode)) {
-                throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
-                        "消息库存模式与活动不一致");
-            }
-            int messageLayout = message.layoutVersion() == null ? 0 : message.layoutVersion();
-            if (messageLayout != 0 && messageLayout != layoutVersion) {
-                throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
-                        "消息布局版本与单库存活动不一致");
-            }
-            return;
-        }
-
-        // BUCKET 活动必须携带明确布局；旧 SINGLE 消息不能被解释为桶请求。
-        if (messageMode == null || !StockMode.BUCKET.name().equalsIgnoreCase(messageMode)) {
-            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
-                    "BUCKET 活动收到缺少库存模式的消息");
-        }
-        if (message.layoutVersion() == null || message.layoutVersion() != layoutVersion) {
-            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH,
-                    "消息布局版本与桶活动不一致");
-        }
+    private void validateMessageLayout(SeckillOrderMessage message, StockMode activityMode, int layoutVersion) {
+        if (!activityMode.name().equals(message.stockMode())
+                || message.layoutVersion() == null || message.layoutVersion() != layoutVersion
+                || message.startBucketNo() == null || message.startBucketNo() < 0
+                || activityMode == StockMode.SINGLE && message.startBucketNo() != 0)
+            throw new OrderBusinessException(OrderFailure.LAYOUT_MISMATCH, "消息库存布局与活动不一致");
     }
 }

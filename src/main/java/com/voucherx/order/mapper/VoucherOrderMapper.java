@@ -18,7 +18,7 @@ import org.apache.ibatis.annotations.Select;
 public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
 
     /**
-     * 按请求唯一身份查订单，供重复消息幂等和历史请求查询使用。
+     * 按请求唯一身份查订单，供重复消息幂等和对账核对使用。
      *
      * @param requestId
      *                      抢券请求 ID

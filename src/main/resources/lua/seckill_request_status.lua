@@ -1,10 +1,9 @@
--- 条件更新秒杀请求状态，防止入口较晚的 PROCESSING/UNKNOWN 覆盖消费者已写入的终态。
+-- 数据库结果已确定后，只更新 SUCCESS/FAILED；保护已成功和已释放状态。
 -- KEYS[1] 请求状态 Hash
 -- ARGV[1] 目标状态
 -- ARGV[2] messageId，空字符串表示不更新
 -- ARGV[3] orderId，空字符串表示不更新
 -- ARGV[4] reason，空字符串表示不更新
--- ARGV[5] TTL 秒
 -- 返回 1 表示执行了更新，0 表示状态不存在或被终态保护拒绝。
 local key = KEYS[1]
 local newStatus = ARGV[1]
@@ -26,12 +25,6 @@ local function allowed()
     end
     if current == 'RELEASED' then
         return false
-    end
-    if newStatus == 'UNKNOWN' then
-        return current == 'PENDING' or current == 'PROCESSING' or current == 'UNKNOWN'
-    end
-    if newStatus == 'PROCESSING' then
-        return current == 'PENDING' or current == 'PROCESSING'
     end
     return false
 end

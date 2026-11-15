@@ -38,36 +38,6 @@ public class SeckillStockService {
     }
 
     /**
-     * 兼容入口，按初始恢复代次 1 执行预留；正常抢券链路使用显式传入代次的重载。
-     *
-     * @param voucherId
-     *                          活动 ID
-     * @param userId
-     *                          已认证用户 ID
-     * @param requestId
-     *                          已提交 MySQL 意图的请求 ID
-     * @param nowMillis
-     *                          编排层取得的当前 Unix 毫秒
-     * @param beginMillis
-     *                          活动开始 Unix 毫秒
-     * @param endMillis
-     *                          活动结束 Unix 毫秒
-     * @param stockMode
-     *                          SINGLE 或 BUCKET
-     * @param startBucketNo
-     *                          计划起始桶
-     * @param layoutVersion
-     *                          本次请求绑定的库存布局版本
-     * @return Lua 返回值：非负表示成功；负数表示明确拒绝
-     */
-    public long reserve(Long voucherId, Long userId, String requestId,
-            long nowMillis, long beginMillis, long endMillis,
-            String stockMode, int startBucketNo, int layoutVersion) {
-        return reserve(voucherId, userId, requestId, nowMillis, beginMillis, endMillis, stockMode, startBucketNo,
-                layoutVersion, 1);
-    }
-
-    /**
      * 把 Redis 操作位置放入 KEYS，把请求身份和业务条件按顺序放入 ARGV，执行一次预留脚本。
      * <p>
      * 五个键的顺序不能交换：
@@ -142,28 +112,11 @@ public class SeckillStockService {
     }
 
     /**
-     * 兼容入口，以初始恢复代次 1 调用释放脚本；仍须先满足数据库关闭屏障。
-     *
-     * @param voucherId
-     *                      活动 ID
-     * @param userId
-     *                      原预留用户 ID
-     * @param requestId
-     *                      原预留请求 ID
-     * @param reason
-     *                      释放原因
-     * @return 脚本完成释放或确认已释放时为 true
-     */
-    public boolean release(Long voucherId, Long userId, String requestId, String reason) {
-        return release(voucherId, userId, requestId, reason, 1);
-    }
-
-    /**
      * 05 的 Redis 释放适配层；调用前必须已提交 MySQL 关闭屏障，且当前持有活动/请求/补偿保护锁。
      * <p>
      * KEYS 顺序为 stock、users、request、owners、gate；ARGV 为
      * userId、reason、requestId、epoch，没有 compensationId。
-     * 脚本检查门禁（缺失时按 NORMAL/1）、库存/请求键存在，以及请求 Hash 的 requestId、userId、epoch。
+     * 脚本要求完整且匹配的门禁、库存/请求键存在，以及请求 Hash 的 requestId、userId、epoch。
      * <p>
      * 随后原请求 status=RELEASED 直接返回 2，不再次删 owners 或 INCR；status=SUCCESS 拒绝。
      * 尚未释放时才要求 owners[userId] 仍指向原请求且库存数值合法，再原子移除归属/资格、加回 1、写 RELEASED 并 PERSIST

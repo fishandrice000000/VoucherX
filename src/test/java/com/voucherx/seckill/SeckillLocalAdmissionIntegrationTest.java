@@ -46,17 +46,17 @@ class SeckillLocalAdmissionIntegrationTest extends AbstractIntegrationTest {
         createUser(2);
         createActivity(VOUCHER_ID, 10, 10, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 10);
+        initializeRedisState(VOUCHER_ID, 10);
 
         String token1 = issueToken(1L);
         String token2 = issueToken(2L);
 
         mockMvc.perform(post("/api/seckill/vouchers/{id}", VOUCHER_ID)
-                .header("Authorization", "Bearer " + token1))
+                .header("Authorization", "Bearer " + token1).header("Idempotency-Key", "local-user-1"))
                 .andExpect(status().isAccepted());
 
         mockMvc.perform(post("/api/seckill/vouchers/{id}", VOUCHER_ID)
-                .header("Authorization", "Bearer " + token2))
+                .header("Authorization", "Bearer " + token2).header("Idempotency-Key", "local-user-2"))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value(42920));
 

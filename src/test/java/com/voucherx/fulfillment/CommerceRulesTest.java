@@ -51,7 +51,7 @@ class CommerceRulesTest {
     }
 
     /**
-     * 待付单截止 200，199 可 APPLIED，200 为 CONFLICT_EXPIRED；CANCELLED 和 LEGACY_CREATED
+     * 待付单截止 200，199 可 APPLIED，200 为 CONFLICT_EXPIRED；CANCELLED
      * 均为终态冲突。
      */
     @Test
@@ -59,7 +59,6 @@ class CommerceRulesTest {
         assertThat(CommerceRules.paymentOutcome("PENDING_PAYMENT", 200, 199, true)).isEqualTo("APPLIED");
         assertThat(CommerceRules.paymentOutcome("PENDING_PAYMENT", 200, 200, true)).isEqualTo("CONFLICT_EXPIRED");
         assertThat(CommerceRules.paymentOutcome("CANCELLED", 200, 100, true)).isEqualTo("CONFLICT_TERMINAL");
-        assertThat(CommerceRules.paymentOutcome("LEGACY_CREATED", 200, 100, true)).isEqualTo("CONFLICT_TERMINAL");
     }
 
     /**

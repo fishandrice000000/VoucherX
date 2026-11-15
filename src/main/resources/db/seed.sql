@@ -9,9 +9,9 @@ VALUES (1, 'VoucherX 演示茶餐厅', 1, '/imgs/shop-1.jpg', '中心商圈', '�
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO tb_voucher (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
-VALUES (1, 1, '100 元秒杀代金券', '限量 100 张', '每用户限购 1 张，仅限 V1 演示使用', 1000, 10000, 1, 1)
+VALUES (1, 1, '100 元秒杀代金券', '限量 100 张', '每用户限购 1 张，仅限演示使用', 1000, 10000, 1, 1)
 ON DUPLICATE KEY UPDATE title = VALUES(title);
 
-INSERT INTO tb_seckill_voucher (voucher_id, total_stock, stock, begin_time, end_time)
-VALUES (1, 100, 100, '2024-01-01 00:00:00', '2099-12-31 23:59:59')
+INSERT INTO tb_seckill_voucher (voucher_id, total_stock, stock, stock_mode, bucket_count, layout_version, begin_time, end_time)
+VALUES (1, 100, 100, 'SINGLE', 1, 1, '2024-01-01 00:00:00', '2099-12-31 23:59:59')
 ON DUPLICATE KEY UPDATE total_stock = VALUES(total_stock);

@@ -8,15 +8,17 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 
 **技术深化 02** 已实现本地令牌桶、Redis 共享/活动双层固定限流、有界消费反馈和 AIMD 控制器；默认 `OFF`。已修复拒绝分支重复补充令牌、自适应缺失策略退回永久默认值两个正确性问题；默认持久化下 `OFF` 测得 `R=175 req/s`。修复前的 FIXED/ADAPTIVE 探索数据已作废，三组正式重复待重跑；自适应未通过启用验收。
 
-**技术深化 03** 已交付持久化请求意图、受理流水与 Outbox、可恢复投递、事务内请求终态校验和默认关闭的有界批量消费。受理语义改为 MySQL 受理/事件事务提交后返回 202，不再等待 Broker Confirm；可选 `Idempotency-Key` 用于原请求重试。已通过单元测试和一条真实组件受理至落库检查，未做性能验收。详见 [03 实现与使用](docs/03/implementation-03.md)。
+**技术深化 03** 已交付持久化请求意图、受理流水与 Outbox、可恢复投递、事务内请求终态校验和默认关闭的有界批量消费。受理语义改为 MySQL 受理/事件事务提交后返回 202，不再等待 Broker Confirm；必填 `Idempotency-Key` 用于原请求重试。已通过单元测试和一条真实组件受理至落库检查，未做性能验收。详见 [03 实现与使用](docs/03/implementation-03.md)。
 
-**技术深化 04** 已交付购买付款、用户券、消费订单、并发锁券协议、核销、取消和过期处理；模拟支付默认关闭，历史订单不自动付款/发券。见 [04 实现与使用](docs/04/implementation-04.md)。
+**技术深化 04** 已交付购买付款、用户券、消费订单、并发锁券协议、核销、取消和过期处理；模拟支付默认关闭，新购买订单在建单事务中固定权益并进入待付款状态。见 [04 实现与使用](docs/04/implementation-04.md)。
 
 **技术深化 05** 已交付请求诊断、有界扫描、数据库关闭屏障、幂等补偿及修复审计。自动对账默认关闭，维护命令见 [05 实现与使用](docs/05/implementation-05.md)，工具入口见 [scripts](scripts/README.md)。
 
 **技术深化 06** 已交付活动冻结、数据库恢复代次屏障、保留在途受理的库存/资格重建、复流校验与默认关闭的故障注入入口。当前以交付为目标，通过编译、单测及初步组件检查，不代表完整可靠性或性能验收。见 [06 实现与运行](docs/06/implementation-06.md)。
 
-生产数据访问已统一为 MyBatis / MyBatis-Plus：受理、Outbox、付款核销、对账补偿与恢复的 SQL 下沉到 Mapper，购买订单、消费订单、用户券等使用类型化结果。事务及锁协议保留；共享格式规则与命令行工具已接入。本轮 36 个单元测试、52 个真实组件集成测试通过，未执行正式性能压测。详见本地 [重构说明](docs/mybatis-refactor/README.md)。
+生产数据访问已统一为 MyBatis / MyBatis-Plus：受理、Outbox、付款核销、对账补偿与恢复的 SQL 下沉到 Mapper，购买订单、消费订单、用户券等使用类型化结果。事务及锁协议保留；共享格式规则与命令行工具已接入。此前 MyBatis 重构曾通过 36 个单元测试、52 个真实组件集成测试，未执行正式性能压测。详见本地 [重构说明](docs/mybatis-refactor/README.md)。
+
+本轮兼容清理验证：40 条单元测试、56 条真实组件集成测试通过；两个千用户争抢用例未执行。覆盖严格 Bearer/幂等键协议、完整消息与门禁、初始化与冻结互斥，以及原有下单、支付核销、补偿恢复链路。
 
 ## 技术栈
 
@@ -33,7 +35,7 @@ VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权�
 | 用户登录 | 手机号验证码登录、Redis 验证码、随机 Token、登录拦截器、登录态续期、请求结束清理用户上下文、验证码手机号冷却与 IP 频率限制 |
 | 商户查询 | 按 ID 查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建与安全释放锁 |
 | 优惠券秒杀 | Redis Lua 原子预扣、一人一单、RabbitMQ 异步下单、Publisher Confirm、mandatory 路由失败处理、手动 ACK、有界重试、死信队列、MySQL 条件扣库存与唯一约束、异步结果查询 |
-| MySQL 库存桶（方向 01，实验） | 活动级 `SINGLE / BUCKET` 模式、128 桶布局、固定起始桶与有界跨桶尝试、实际桶写入订单、桶编号完整性校验、布局初始化与兼容迁移；未通过启用验收，默认不启用 |
+| MySQL 库存桶（方向 01，实验） | 活动级 `SINGLE / BUCKET` 模式、128 桶布局、固定起始桶与有界跨桶尝试、实际桶写入订单、桶编号完整性校验、完整布局校验与安全初始化；未通过启用验收，默认不启用 |
 | 多级限流（方向 02，实验） | `OFF / FIXED / ADAPTIVE` 模式、本地令牌桶、Redis 共享/活动双层令牌桶、策略 TTL、完成 TPS/队列/连接池反馈、AIMD、429/503 拒绝语义；已修复令牌结算/策略缺失问题，正式对照待重跑，默认 `OFF` |
 
 支付核销、批量处理、自动对账与补偿已在 03–06 新增，未引入 Redis Stream、Kafka/RocketMQ 或 Redis 库存分片。方向 02 的限流/自适应是默认关闭的实验能力；MySQL 库存桶仅保留为显式配置的实验能力，默认活动继续使用 `SINGLE`。
@@ -69,25 +71,9 @@ Compose 端口特意避开常见的 `3306 / 6379 / 5672`：
 
 MySQL 首次启动时会执行 `src/main/resources/db/schema.sql` 和 `seed.sql`，创建一个演示商户与一场 100 库存的秒杀活动。
 
-已有 V1 数据库升级到桶模式/完成时间观测时，依次执行一次：
+当前版本只支持全新数据库基线，`schema.sql` 包含全部表、字段和索引，不再提供旧版本增量迁移。已有 Docker 数据卷不会因重启自动升级；请另行准备独立的新环境。本轮清理不会删除、转换本机已有数据或清空消息队列。
 
-```bash
-docker compose exec -T mysql mysql -uvoucherx -pvoucherx voucherx \
-  < src/main/resources/db/migration/02-mysql-buckets.sql
-docker compose exec -T mysql mysql -uvoucherx -pvoucherx voucherx \
-  < src/main/resources/db/migration/03-order-completed-at.sql
-```
-
-03–06 升级继续依序执行以下迁移，各执行一次：
-
-```bash
-for migration in 04-reliable-acceptance 05-commerce 06-reconciliation 07-recovery; do
-  docker compose exec -T mysql mysql -uvoucherx -pvoucherx voucherx \
-    < "src/main/resources/db/migration/${migration}.sql"
-done
-```
-
-升级前停止旧版本写入并处理旧在途请求；无新受理流水的旧消息会隔离，不能自动补造事实。历史订单仍可查询，不自动付款或发券。新环境直接使用 `schema.sql`，无需再执行迁移。
+接口只接受 `Authorization: Bearer <token>`，抢券必须提供合法的 `Idempotency-Key`。消息必须明确携带库存模式、起始桶、布局版本和恢复代次；缺字段的旧消息会拒绝，查询也不再回退历史订单。
 
 ### 2. 启动应用
 
@@ -126,7 +112,8 @@ curl -X POST http://localhost:8080/api/auth/login \
 
 # 秒杀，替换 <token>
 curl -i -X POST http://localhost:8080/api/seckill/vouchers/1 \
-  -H 'Authorization: Bearer <token>'
+  -H 'Authorization: Bearer <token>' \
+  -H 'Idempotency-Key: buy-1-user-1'
 
 # 查询异步结果，替换 <token> 和 <requestId>
 curl http://localhost:8080/api/seckill/requests/<requestId> \
@@ -142,7 +129,7 @@ curl http://localhost:8080/api/seckill/requests/<requestId> \
 | `GET` | `/api/auth/me` | 是 | 查询当前用户，并刷新 Token TTL |
 | `POST` | `/api/auth/logout` | 是 | 删除登录态 |
 | `GET` | `/api/shops/{shopId}` | 否 | 查询商户详情，使用 Redis 缓存 |
-| `POST` | `/api/seckill/vouchers/{voucherId}` | 是 | 受理秒杀请求，返回 `202` 与 `requestId` |
+| `POST` | `/api/seckill/vouchers/{voucherId}` | 是 | 必填 `Idempotency-Key`，受理后返回 `202` 与 `requestId` |
 | `GET` | `/api/seckill/requests/{requestId}` | 是 | 查询异步处理状态，仅请求所有者可查 |
 | `POST` | `/api/consumption-orders` | 是 | 使用本人券创建消费订单并锁券 |
 | `GET` | `/api/coupons` | 是 | 本人用户券游标分页 |
@@ -176,7 +163,7 @@ curl http://localhost:8080/api/seckill/requests/<requestId> \
 mvn test
 ```
 
-本次 03–06 交付验证：36 个单元测试通过；真实 MySQL/Redis/RabbitMQ 下的 6 条功能/恢复/维护 CLI 组件检查通过和 9 个针对性兼容回归。没有执行两个千用户争抢用例、耗时压测、真实进程强杀或完整故障矩阵；原有 V1/01/02 全量结果是历史记录，不等于本轮重跑。
+此前 03–06 交付记录：36 个单元测试通过；真实 MySQL/Redis/RabbitMQ 下的 6 条功能/恢复/维护 CLI 组件检查通过和 9 个针对性兼容回归。没有执行两个千用户争抢用例、耗时压测、真实进程强杀或完整故障矩阵；该段条数为历史记录；当前兼容清理回归结果见本文开头。
 
 ```bash
 mvn -Punit clean package
@@ -191,8 +178,8 @@ mvn -Dtest=DeliveryComponentTest test
 - **MySQL 最终防线**：`UPDATE ... WHERE stock > 0` 加条件扣库存；`(voucher_id, user_id)` 唯一约束保证一人一单；`request_id` 唯一约束保证请求幂等。
 - **消息成功定义**：只有 Publisher Confirm 为 ACK 且 mandatory 消息成功路由，才算投递成功。
 - **ACK 时机**：消费者仅在 MySQL 事务提交成功、已处理的幂等重复、或持久化终态已确定后 ACK；临时失败通过持久事件安排有界重试，耗尽后隔离，不伪造最终失败。
-- **状态查询**：优先读取 MySQL 持久化请求流水，历史请求可回源已提交订单；Redis 仅保留过程/预留信息，不把未知状态报告为成功或失败。
-- **库存初始化**：应用启动时只对“无历史订单且数据库库存仍为初始总库存”的活动做 `SETNX` 初始化；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。BUCKET 模式按桶额度和校验布局后初始化。
+- **状态查询**：优先读取 MySQL 持久化请求流水，不存在账本时返回请求不存在；Redis 仅保留过程/预留信息，不把未知状态报告为成功或失败。
+- **库存初始化**：初始化在活动控制行独占锁内读取配置，先显式建立门禁，再对“无订单、无未结请求且库存未消费”的活动做 `SETNX`；已有库存却门禁缺失或不一致时拒绝自动修复；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。BUCKET 模式按桶额度和校验布局后初始化。
 - **MySQL 桶模式（实验）**：用户稳定路由到起始桶 `userId % bucketCount`，消费者校验桶编号完整覆盖并尝试后续桶；实际扣减桶写入订单。Redis 仍为单库存 Key；未通过启用验收，默认 `SINGLE`。
 - **发布与状态**：发布器依赖 Spring AMQP 的 `CorrelationData.getReturned()` 判定 mandatory 路由失败，不再额外等待 100ms；请求状态使用条件 Lua 转移，迟到状态不能覆盖 `SUCCESS / FAILED / RELEASED`。
 

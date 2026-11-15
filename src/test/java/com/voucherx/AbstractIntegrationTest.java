@@ -100,11 +100,27 @@ public abstract class AbstractIntegrationTest {
     private void purgeQueues() {
         try {
             rabbitAdmin.purgeQueue(RabbitMqConfig.MAIN_QUEUE, false);
-            rabbitAdmin.purgeQueue(RabbitMqConfig.RETRY_QUEUE, false);
             rabbitAdmin.purgeQueue(RabbitMqConfig.DEAD_QUEUE, false);
         } catch (Exception ignored) {
             // 队列尚未声明时忽略；应用启动后 RabbitAdmin 会自动声明。
         }
+    }
+
+    /**
+     * 为直接验证 Lua 或构造已消费场景准备明确的门禁和库存；不替代生产安全初始化测试。
+     *
+     * @param voucherId
+     *                      活动 ID
+     * @param remaining
+     *                      测试需要的 Redis 余额
+     * @return 缺失库存键本次是否创建成功
+     */
+    protected boolean initializeRedisState(long voucherId, int remaining) {
+        jdbcTemplate.update("INSERT IGNORE INTO tb_activity_control(voucher_id) VALUES (?)", voucherId);
+        redisTemplate.opsForHash().putAll(com.voucherx.common.redis.RedisKeys.seckillGate(voucherId),
+                java.util.Map.of("state", "NORMAL", "epoch", "1"));
+        return Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(
+                com.voucherx.common.redis.RedisKeys.seckillStock(voucherId), String.valueOf(remaining)));
     }
 
     protected void createUser(long userId) {

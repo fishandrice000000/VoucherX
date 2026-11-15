@@ -76,7 +76,7 @@ public final class CommerceRules {
      * <ol>
      * <li>success=false 始终为 FAILED_ATTEMPT，优先于已付、取消及超时检查，调用方保留原订单状态。</li>
      * <li>成功声明遇到 PAID 为 ALREADY_PAID，不再应用权益。</li>
-     * <li>成功声明遇到非 PENDING_PAYMENT 为 CONFLICT_TERMINAL，LEGACY_CREATED 也属于此分支。</li>
+     * <li>成功声明遇到非 PENDING_PAYMENT 为 CONFLICT_TERMINAL。</li>
      * <li>仍待付但 now 已到 deadline 为 CONFLICT_EXPIRED；否则 APPLIED。</li>
      * </ol>
      * <p>

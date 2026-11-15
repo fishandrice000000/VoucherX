@@ -3,7 +3,7 @@ package com.voucherx.seckill.dto;
 import com.voucherx.seckill.model.SeckillRequestStatus;
 
 /**
- * 抢券建单结果查询响应；以 MySQL 请求账本为主，缺失账本时兼容历史订单。
+ * 抢券建单结果查询响应；只以 MySQL 请求账本为依据，缺失时返回请求不存在。
  * <p>
  * SUCCESS 表示购买订单已经创建，不代表已付款、发券或核销。
  *

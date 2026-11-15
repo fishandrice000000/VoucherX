@@ -69,7 +69,7 @@ public class SeckillOrderConsumer {
     }
 
     /**
-     * 接收容器交付的列表，反序列化每条 JSON，要求请求/事件 ID 非 null、用户/活动 ID 为正且 epoch 至少为 1。
+     * 接收容器交付的列表，反序列化每条 JSON，要求非空请求/事件 ID、正用户/活动 ID、正代次和版本、明确模式与有效起始桶。
      * <p>
      * 本层检查不等于完整业务身份验证，具体模式、布局和账本身份稍后在订单事务核对。
      * 畸形或单条消息体超过 batchBytes 时 NACK(false,false)，不调用订单服务。
@@ -96,7 +96,11 @@ public class SeckillOrderConsumer {
                 if (message == null || message.requestId() == null || message.messageId() == null
                         || message.voucherId() == null
                         || message.userId() == null || message.userId() < 1 || message.voucherId() < 1
-                        || message.epoch() < 1)
+                        || message.requestId().isBlank() || message.messageId().isBlank()
+                        || message.epoch() < 1 || message.layoutVersion() == null || message.layoutVersion() < 1
+                        || message.startBucketNo() == null || message.startBucketNo() < 0
+                        || !("SINGLE".equals(message.stockMode()) || "BUCKET".equals(message.stockMode()))
+                        || "SINGLE".equals(message.stockMode()) && message.startBucketNo() != 0)
                     throw new IllegalArgumentException("消息字段不完整");
             } catch (Exception ex) {
                 channel.basicNack(tag(delivery), false, false);
@@ -117,20 +121,6 @@ public class SeckillOrderConsumer {
         }
         if (!batch.isEmpty())
             process(batch, channel);
-    }
-
-    /**
-     * 单条调用的适配入口，复用相同的校验和处理规则。
-     *
-     * @param message
-     *                    AMQP 投递
-     * @param channel
-     *                    对应的 RabbitMQ 通道
-     * @throws IOException
-     *                         消息确认失败
-     */
-    public void onMessage(Message message, Channel channel) throws IOException {
-        onMessages(List.of(message), channel);
     }
 
     /**

@@ -5,7 +5,6 @@ import com.voucherx.common.api.ErrorCode;
 import com.voucherx.common.exception.BusinessException;
 import com.voucherx.fulfillment.RequestLedger;
 import com.voucherx.fulfillment.RequestRecord;
-import com.voucherx.order.mapper.VoucherOrderMapper;
 import com.voucherx.seckill.dto.SeckillAcceptResponse;
 import com.voucherx.seckill.dto.SeckillRequestStatusResponse;
 import com.voucherx.seckill.model.SeckillRequestStatus;
@@ -15,7 +14,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.time.ZoneId;
-import java.util.UUID;
 
 /**
  * 抢券主线编排：前置校验 → MySQL 意图 → Redis 预留 → MySQL 受理和 Outbox。
@@ -29,36 +27,21 @@ import java.util.UUID;
 @Service
 public class SeckillService {
     private final SeckillVoucherMapper activities;
-    private final VoucherOrderMapper orders;
     private final SeckillStockService stock;
     private final RequestLedger ledger;
     private final com.voucherx.recovery.FaultInjector faults;
     private final SeckillAdmissionService admission;
     private final Clock clock;
 
-    public SeckillService(SeckillVoucherMapper activities, VoucherOrderMapper orders, SeckillStockService stock,
+    public SeckillService(SeckillVoucherMapper activities, SeckillStockService stock,
             RequestLedger ledger, SeckillAdmissionService admission, Clock clock,
             com.voucherx.recovery.FaultInjector faults) {
         this.faults = faults;
         this.activities = activities;
-        this.orders = orders;
         this.stock = stock;
         this.ledger = ledger;
         this.admission = admission;
         this.clock = clock;
-    }
-
-    /**
-     * 未提供客户端幂等键的调用入口；每次新尝试由服务端生成独立键。
-     *
-     * @param user
-     *                    已认证用户 ID
-     * @param voucher
-     *                    活动 ID
-     * @return 请求 ID 及当前处理状态
-     */
-    public SeckillAcceptResponse seckill(Long user, Long voucher) {
-        return seckill(user, voucher, null);
     }
 
     /**
@@ -79,20 +62,18 @@ public class SeckillService {
      * @param voucher
      *                      活动 ID
      * @param clientKey
-     *                      可选客户端幂等键；同一用户下唯一并绑定活动
+     *                      必填客户端幂等键；同一用户下唯一并绑定活动
      * @return 新请求的 PROCESSING/UNKNOWN，或同键原请求的当前状态
      * @see com.voucherx.seckill.service.SeckillStockService#reserve(Long, Long,
      *      String, long, long, long, String, int, int, long)
      * @see com.voucherx.order.service.OrderPersistenceService#persist
      */
     public SeckillAcceptResponse seckill(Long user, Long voucher, String clientKey) {
-        if (clientKey != null && !clientKey.matches("[A-Za-z0-9._:-]{1,64}"))
+        if (clientKey == null || !clientKey.matches("[A-Za-z0-9._:-]{1,64}"))
             throw new BusinessException(ErrorCode.INVALID_PARAM, "Idempotency-Key 格式不合法");
-        if (clientKey != null) {
-            RequestRecord old = ledger.byKey(user, clientKey);
-            if (old != null)
-                return replay(old, voucher);
-        }
+        RequestRecord old = ledger.byKey(user, clientKey);
+        if (old != null)
+            return replay(old, voucher);
         var activity = activities.selectById(voucher);
         if (activity == null)
             throw new BusinessException(ErrorCode.SECKILL_NOT_FOUND);
@@ -103,19 +84,21 @@ public class SeckillService {
             throw new BusinessException(ErrorCode.SECKILL_NOT_STARTED);
         if (now > end)
             throw new BusinessException(ErrorCode.SECKILL_ENDED);
-        StockMode mode = StockMode.parse(activity.getStockMode());
-        int buckets = activity.getBucketCount() == null ? 1 : activity.getBucketCount();
-        if (buckets < 1)
-            throw new BusinessException(ErrorCode.SECKILL_STOCK_UNAVAILABLE);
+        StockMode mode;
+        try {
+            mode = StockMode.requireLayout(activity);
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException(ErrorCode.SECKILL_STOCK_UNAVAILABLE, "库存布局配置不合法", ex);
+        }
+        int buckets = activity.getBucketCount();
         int bucket = mode == StockMode.BUCKET ? Math.floorMod(user, buckets) : 0;
         admission.acquireGlobal(voucher);
-        String key = clientKey == null ? UUID.randomUUID().toString() : clientKey;
         RequestRecord r;
         try {
-            r = ledger.intent(user, voucher, key, mode.name(), bucket,
-                    activity.getLayoutVersion() == null ? 1 : activity.getLayoutVersion());
+            r = ledger.intent(user, voucher, clientKey, mode.name(), bucket,
+                    activity.getLayoutVersion());
         } catch (DuplicateKeyException ex) {
-            r = ledger.byKey(user, key);
+            r = ledger.byKey(user, clientKey);
             if (r == null)
                 throw ex;
             return replay(r, voucher);
@@ -180,7 +163,7 @@ public class SeckillService {
     }
 
     /**
-     * 先读 MySQL 请求账本并验证用户所有权，按业务阶段给出建单进度；无新账本时才兼容读取历史订单。
+     * 先读 MySQL 请求账本并验证用户所有权，按业务阶段给出建单进度；没有账本时返回请求不存在，不从订单推导请求状态。
      * <p>
      * INTENT→UNKNOWN、ACCEPTED→PROCESSING、CLOSED→FAILED、SUCCEEDED→SUCCESS。
      * 不根据 Outbox 的 SENT 或 QUARANTINED 推断终态，也不以 Redis 缓存作为最终事实。
@@ -199,10 +182,6 @@ public class SeckillService {
                 throw new BusinessException(ErrorCode.REQUEST_NOT_FOUND);
             return new SeckillRequestStatusResponse(id, status(r), r.orderId(), r.eventId(), r.reason());
         }
-        var order = orders.selectByRequestId(id);
-        if (order == null || !user.equals(order.getUserId()))
-            throw new BusinessException(ErrorCode.REQUEST_NOT_FOUND);
-        return new SeckillRequestStatusResponse(id, SeckillRequestStatus.SUCCESS, order.getId(), order.getMessageId(),
-                null);
+        throw new BusinessException(ErrorCode.REQUEST_NOT_FOUND);
     }
 }

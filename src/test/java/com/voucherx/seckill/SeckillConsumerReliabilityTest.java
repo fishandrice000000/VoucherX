@@ -54,16 +54,17 @@ class SeckillConsumerReliabilityTest extends AbstractIntegrationTest {
         createUser(1);
         createActivity(VOUCHER_ID, 1, 1, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
-        stockService.initializeIfAbsent(VOUCHER_ID, 1);
+        initializeRedisState(VOUCHER_ID, 1);
 
         doThrow(new DataAccessResourceFailureException("模拟数据库瞬时失败"))
                 .doCallRealMethod()
                 .when(orderPersistenceService).persist(any());
 
-        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID);
+        SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
 
         await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
-            assertThat(statusStore.find(accepted.requestId()).get("status"))
+            assertThat(redisTemplate.<String, String>opsForHash()
+                    .entries(com.voucherx.common.redis.RedisKeys.seckillRequest(accepted.requestId())).get("status"))
                     .isEqualTo(SeckillRequestStatus.SUCCESS.name());
             Integer orders = jdbcTemplate.queryForObject(
                     "SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = ?",

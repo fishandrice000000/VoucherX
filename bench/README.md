@@ -9,7 +9,7 @@
 | `LoadClient.java` | JDK 21 单文件恒定速率压测客户端，虚拟线程、开环限速、HTTP 延迟与状态采样 |
 | `PhaseLoadClient.java` | 分阶段开环客户端，按 `倍数:秒` 执行健康/突增/恢复轨迹并输出阶段统计 |
 | `prepare-data.py` | 生成压测用户 SQL、Token 文件和 Redis RESP 文件 |
-| `create-activity.sh` | 创建 SINGLE 或 BUCKET 压测活动并初始化 Redis 库存 |
+| `create-activity.sh` | 准备 SINGLE 或 BUCKET 活动；启动应用时由初始化器建立 Redis 状态 |
 | `snapshot.sh` | 采集 Redis/MySQL/RabbitMQ/容器/应用快照 |
 | `sample.sh` | 每 2 秒轻量采样队列、Redis、应用 CPU；不在负载中查询 performance_schema |
 | `lock-probe.sh` | 独立低频锁探测，在峰值附近采样 3 次库存表/索引/记录 |
@@ -54,12 +54,14 @@ DB_NAME=voucherx02 REDIS_DB=2 BENCH_ROOT=tmp/02 \
 
 ## 启动应用（方向 01 对照）
 
+先用 `create-activity.sh` 准备本轮全部活动，再启动应用完成门禁与库存初始化。应用已运行时新建活动，需要在正式施压前重启该隔离应用完成初始化。
+
 ```bash
 mvn -DskipTests package
 SPRING_RABBITMQ_LISTENER_SIMPLE_CONCURRENCY=8 \
 SPRING_RABBITMQ_LISTENER_SIMPLE_MAX_CONCURRENCY=8 \
-  nohup java -jar target/voucherx-0.1.0-SNAPSHOT.jar > /tmp/voucherx-app.log 2>&1 &
-pgrep -f '^java -jar target/voucherx-0.1.0-SNAPSHOT.jar$' > /tmp/voucherx-app.pid
+  nohup env -u DEBUG java -jar target/voucherx-0.1.0-SNAPSHOT.jar --debug=false > /tmp/voucherx-app.log 2>&1 &
+echo $! > /tmp/voucherx-app.pid
 ```
 
 默认消费者并发为 1；方向 01 对照固定为 8，两组必须一致。`run-one.sh` 依赖 `/tmp/voucherx-app.pid` 采集应用 CPU。
@@ -67,12 +69,11 @@ pgrep -f '^java -jar target/voucherx-0.1.0-SNAPSHOT.jar$' > /tmp/voucherx-app.pi
 ## 运行一次实验
 
 ```bash
+# 先在应用启动前准备 9101（SINGLE）和 9701（128 桶），再运行。
 # 单库存，400 req/s，30s 预热 + 120s 测量
-bench/create-activity.sh 9101 1000000
 TOKEN_OFFSET=0 bench/run-one.sh single-9101 9101 400 30 120 128 0
 
 # MySQL 128 桶，同样参数
-bench/create-activity.sh 9701 1000000 128
 TOKEN_OFFSET=60000 bench/run-one.sh cap-bucket128-9701 9701 400 30 120 128 0
 ```
 
@@ -112,7 +113,7 @@ python3 bench/summarize.py \
   "bucket128x400:tmp/01/cap-bucket128-9701,tmp/01/cap-bucket128-9702,tmp/01/cap-bucket128-9703"
 ```
 
-详细结果与结论见 `docs/01/benchmark-01.md`。
+比较实验时应保留各组原始输出、应用配置和运行环境，并使用相同负载与积压约束。
 
 ## 基准持久化配置
 
@@ -137,3 +138,7 @@ SET GLOBAL sync_binlog = 0;
 ## 观测字段与统计口径
 
 `orders.csv` 使用 `request_id,insert_started_at_ms`，数据来自 `tb_purchase_order`。`insert_started_at_ms` 在插单前采样；基于它计算的 e2e 指标是从请求开始到插单前的近似延迟。事务提交与消费者 ACK 在采样之后完成。新实验使用新表和新数据，统计脚本读取当前 CSV 格式。
+
+## 当前请求与准备流程
+
+两个客户端均为每次 POST 提供独立的 `Idempotency-Key`。`create-activity.sh` 准备数据库活动后，启动应用，由库存初始化器创建完整 Redis 门禁与库存；请在启动前准备本轮所有活动。`run-one.sh` 排空检查包含数据库 INTENT／ACCEPTED 请求，默认上限 120 秒，可用 `DRAIN_MAX_SECONDS` 调整。

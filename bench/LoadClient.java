@@ -132,6 +132,7 @@ public final class LoadClient {
                 HttpRequest request = HttpRequest.newBuilder(seckillUri)
                         .timeout(Duration.ofSeconds(10))
                         .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
                         .POST(HttpRequest.BodyPublishers.noBody())
                         .build();
                 HttpResponse<String> response = client.send(request,

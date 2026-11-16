@@ -21,9 +21,14 @@ out="${BENCH_ROOT}/${run_id}"
 tokens="${TOKENS_FILE:-${BENCH_ROOT}/tokens.txt}"
 mkdir -p "$out"
 
-if [[ ! -f /tmp/voucherx-bench/LoadClient.class ]]; then
-  javac -d /tmp/voucherx-bench bench/LoadClient.java
+# 活动必须经过应用初始化器建立完整门禁和库存，再进入正式测量。
+gate_state=$(docker compose exec -T redis redis-cli -n "$REDIS_DB" HGET "voucherx:seckill:gate:${voucher_id}" state | tr -d '\r')
+if [[ "$gate_state" != "NORMAL" ]]; then
+  echo "活动门禁未就绪，请先准备活动并启动应用完成初始化: ${voucher_id}" >&2
+  exit 2
 fi
+
+javac -d /tmp/voucherx-bench bench/LoadClient.java
 
 bench/snapshot.sh "$out" before
 bench/sample.sh "$out/samples.csv" "$((warmup + duration + 120))" > "$out/sampler.log" 2>&1 &
@@ -57,13 +62,14 @@ echo "load_exit=${load_exit}" > "$out/exit-codes.txt"
 # 等待主队列、未 ACK 与重试队列排空；有明确排空上限，避免无限等待。
 drain_start=$(date +%s)
 drained=0
-for _ in $(seq 1 120); do
+while (( $(date +%s) - drain_start < ${DRAIN_MAX_SECONDS:-120} )); do
   rabbit=$(docker compose exec -T rabbitmq rabbitmqctl -q list_queues name messages messages_unacknowledged 2>/dev/null || true)
   main=$(awk '$1=="voucherx.seckill.order.queue"{print $2}' <<<"$rabbit")
   unacked=$(awk '$1=="voucherx.seckill.order.queue"{print $3}' <<<"$rabbit")
   retry=$(awk '$1=="voucherx.seckill.order.retry.queue"{print $2}' <<<"$rabbit")
   main=${main:-0}; unacked=${unacked:-0}; retry=${retry:-0}
-  if (( main == 0 && unacked == 0 && retry == 0 )); then
+  unsettled=$(docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" -e "SELECT COUNT(*) FROM tb_seckill_request WHERE voucher_id=${voucher_id} AND phase IN ('INTENT','ACCEPTED')" 2>/dev/null)
+  if (( main == 0 && unacked == 0 && retry == 0 && unsettled == 0 )); then
     drained=1
     break
   fi

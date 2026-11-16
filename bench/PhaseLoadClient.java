@@ -184,6 +184,7 @@ public final class PhaseLoadClient {
                     HttpRequest request = HttpRequest.newBuilder(uri)
                             .timeout(Duration.ofSeconds(10))
                             .header("Authorization", "Bearer " + token)
+                            .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
                             .POST(HttpRequest.BodyPublishers.noBody()).build();
                     HttpResponse<String> response = client.send(request,
                             HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 创建压测活动并初始化 Redis 单库存。仅允许 >= 9000 的压测活动 ID。
+# 准备压测活动数据库记录；随后启动应用，由初始化器建立 Redis 门禁和库存。仅允许 >= 9000。
 # 用法: bench/create-activity.sh <voucher-id> <stock> [bucket-count]
 # bucket-count 缺省为 1（SINGLE）；>1 时使用 MySQL BUCKET 模式。
 set -euo pipefail
@@ -57,6 +57,4 @@ VALUES (${voucher_id}, ${stock}, ${activity_stock}, '${mode}', ${bucket_count}, 
 ${bucket_sql}
 SQL
 
-docker compose exec -T redis redis-cli -n "$REDIS_DB" SET "voucherx:seckill:stock:${voucher_id}" "${stock}" >/dev/null
-docker compose exec -T redis redis-cli -n "$REDIS_DB" DEL "voucherx:seckill:users:${voucher_id}" >/dev/null
-echo "activity=${voucher_id} stock=${stock} mode=${mode} buckets=${bucket_count} redis_stock_initialized"
+echo "activity=${voucher_id} stock=${stock} mode=${mode} buckets=${bucket_count} database_prepared_restart_app_to_initialize"

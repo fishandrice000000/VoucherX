@@ -288,3 +288,5 @@ bench/            # 压测客户端、数据准备、快照、采样与结果汇
 ### 数据与事件命名
 
 购买订单保存在 `tb_purchase_order`，固定业务事件统一使用 `eventId`（SQL／订单 JSON 为 `event_id`）；插单前观测时间为 `insertStartedAtMs`（SQL／订单 JSON 为 `insert_started_at_ms`）。券模板使用 `purchase_price` 与 `face_value`。运行和压测使用全新数据库表、Redis 状态和消息数据。
+
+对账修复回执按动作结果表达：`SYNC_ATTEMPTED` 为已尝试同步缓存，`REDELIVERY_SCHEDULED` 为已安排事件重投，`EVENT_QUARANTINED` 为预算耗尽后已隔离，`STATE_CHANGED` 为状态已变化。

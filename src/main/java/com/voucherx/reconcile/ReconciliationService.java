@@ -87,8 +87,8 @@ public class ReconciliationService {
      * <p>
      * 方法不写修复审计或业务状态。Redis 读取失败会抛出，不把无法读取伪装为“确无预留”。
      *
-     * @param id
-     *               要检查的真实 requestId
+     * @param requestId
+     *                      要检查的真实 requestId
      * @return 包含原始快照、归属观察和建议的诊断结果
      * @throws com.voucherx.common.exception.BusinessException
      *                                                             请求账本不存在
@@ -96,27 +96,30 @@ public class ReconciliationService {
      * @see com.voucherx.seckill.service.SeckillStockService#release(Long, Long,
      *      String, String, long)
      */
-    public Diagnosis diagnose(String id) {
-        var r = ledger.find(id);
-        if (r == null)
+    public Diagnosis diagnose(String requestId) {
+        var request = ledger.find(requestId);
+        if (request == null)
             throw new BusinessException(ErrorCode.REQUEST_NOT_FOUND);
-        var order = orders.selectByRequestId(id);
-        boolean match = order != null && order.getUserId() == r.userId() && order.getVoucherId() == r.voucherId();
-        Map<Object, Object> reservation = redis.opsForHash().entries(RedisKeys.seckillRequest(id));
-        boolean owned = id
-                .equals(redis.opsForHash().get(RedisKeys.seckillOwners(r.voucherId()), String.valueOf(r.userId())))
-                && String.valueOf(r.epoch()).equals(reservation.get("epoch"))
-                && String.valueOf(r.userId()).equals(reservation.get("userId"))
-                && String.valueOf(r.voucherId()).equals(reservation.get("voucherId"));
-        String state = outbox.stateByRequest(id);
-        return new Diagnosis(r, ReconcileDecision.decide(r, order != null, match, owned, state), state, owned,
+        var order = orders.selectByRequestId(requestId);
+        boolean match = order != null && order.getUserId() == request.userId()
+                && order.getVoucherId() == request.voucherId();
+        Map<Object, Object> reservation = redis.opsForHash().entries(RedisKeys.seckillRequest(requestId));
+        boolean owned = requestId
+                .equals(redis.opsForHash().get(RedisKeys.seckillOwners(request.voucherId()),
+                        String.valueOf(request.userId())))
+                && String.valueOf(request.epoch()).equals(reservation.get("epoch"))
+                && String.valueOf(request.userId()).equals(reservation.get("userId"))
+                && String.valueOf(request.voucherId()).equals(reservation.get("voucherId"));
+        String state = outbox.stateByRequest(requestId);
+        return new Diagnosis(request, ReconcileDecision.decide(request, order != null, match, owned, state), state,
+                owned,
                 order == null ? null : order.getId());
     }
 
     /**
      * 诊断请求并检查活动 NORMAL 和代次匹配，再执行建议动作。
      * <ul>
-     * <li>SYNC_RESULT：尽力同步成功快照，返回 SYNCED。</li>
+     * <li>SYNC_RESULT：尝试同步成功快照，返回 SYNC_ATTEMPTED。</li>
      * <li>ACCEPT_RESERVATION：提交账本受理；REPLAY_EVENT：通过持锁事务安排同一事件。</li>
      * <li>RELEASE_RESERVATION：依次提交 closeRequestAndPrepareCompensation 和
      * releaseReservationAndRecordResult。</li>
@@ -126,37 +129,39 @@ public class ReconciliationService {
      * 门禁不符时返回 ACTIVITY_ISOLATED。分支结束后保存动作审计，补偿事务还会保存阶段审计。
      * repair 按普通服务调用执行，各分支使用自身事务；顶层审计通常在已提交动作之后单独写入。
      *
-     * @param id
-     *               请求 ID
+     * @param requestId
+     *                      请求 ID
      * @return 本次动作或保持结论；不能仅按返回标签推断库存实际变化次数
      * @see CompensationService#closeRequestAndPrepareCompensation
      * @see CompensationService#releaseReservationAndRecordResult
      */
-    public String repair(String id) {
-        Diagnosis d = diagnose(id);
-        var r = d.request();
-        if (!gate.normal(r.voucherId(), r.epoch()))
+    public String repair(String requestId) {
+        Diagnosis diagnosis = diagnose(requestId);
+        var request = diagnosis.request();
+        if (!gate.normal(request.voucherId(), request.epoch()))
             return "ACTIVITY_ISOLATED";
-        String result = switch (d.action()) {
+        String result = switch (diagnosis.action()) {
             case SYNC_RESULT -> {
-                statuses.markSuccess(id, r.eventId(), d.orderId());
-                yield "SYNCED";
+                statuses.markSuccess(requestId, request.eventId(), diagnosis.orderId());
+                yield "SYNC_ATTEMPTED";
             }
             case ACCEPT_RESERVATION -> {
-                ledger.acceptAndEnqueueEvent(id);
+                ledger.acceptAndEnqueueEvent(requestId);
                 yield "ACCEPTED";
             }
             case RELEASE_RESERVATION -> {
-                compensation.closeRequestAndPrepareCompensation(id,
-                        r.reason() == null ? "BUSINESS_FAILED" : r.reason());
-                yield compensation.releaseReservationAndRecordResult(id);
+                compensation.closeRequestAndPrepareCompensation(requestId,
+                        request.reason() == null ? "BUSINESS_FAILED" : request.reason());
+                yield compensation.releaseReservationAndRecordResult(requestId);
             }
-            case REPLAY_EVENT -> scheduleEventRedelivery(r);
+            case REPLAY_EVENT -> scheduleEventRedelivery(request);
             case WAIT -> "WAIT";
             case ISOLATE -> "ISOLATED";
         };
-        audit.record(id, r.voucherId(), d.action().name(),
-                "phase=" + r.phase() + ",reservation=" + r.reservation() + ",outbox=" + d.outboxState(), result);
+        audit.record(requestId, request.voucherId(), diagnosis.action().name(),
+                "phase=" + request.phase() + ",reservation=" + request.reservation() + ",outbox="
+                        + diagnosis.outboxState(),
+                result);
         return result;
     }
 
@@ -164,22 +169,30 @@ public class ReconciliationService {
      * 在 TransactionTemplate 事务中取得 NORMAL 活动共享锁及请求行锁，重新确认请求仍 ACCEPTED 且代次一致。
      * <p>
      * 随后仅条件修改原 SENT 事件，不直接发送 MQ，也不生成新业务身份。
-     * 更新命中返回 REPLAY_SCHEDULED，但 SQL 会按投递预算选择 PENDING 或 QUARANTINED；该标签不保证一定可继续发送。
+     * 条件更新命中后在同一事务内读取事件状态，PENDING 返回 REDELIVERY_SCHEDULED，QUARANTINED 返回
+     * EVENT_QUARANTINED。
      * 状态已变或事件更新未命中返回 STATE_CHANGED。事务模板默认 REQUIRED，已有外层事务时会加入。
      *
      * @param before
      *                   诊断时的请求快照，仅用于定位活动和请求
-     * @return 事件更新命中标签或状态已变标签
+     * @return 已安排重投、事件已隔离或状态已变化的动作结果
      * @see com.voucherx.fulfillment.mapper.OutboxMapper#scheduleReplay
      */
     private String scheduleEventRedelivery(RequestRecord before) {
         return tx.execute(status -> {
             long epoch = gate.lockNormalActivityAndGetEpoch(before.voucherId());
-            var r = ledger.getRequestForUpdate(before.requestId());
-            if (epoch != r.epoch() || !"ACCEPTED".equals(r.phase()))
+            var request = ledger.getRequestForUpdate(before.requestId());
+            if (epoch != request.epoch() || !"ACCEPTED".equals(request.phase()))
                 return "STATE_CHANGED";
-            int changed = outbox.scheduleReplay(r.requestId(), delivery.maxAttempts(), clock.millis());
-            return changed == 1 ? "REPLAY_SCHEDULED" : "STATE_CHANGED";
+            int changed = outbox.scheduleReplay(request.requestId(), delivery.maxAttempts(), clock.millis());
+            if (changed != 1)
+                return "STATE_CHANGED";
+            String eventState = outbox.stateByRequest(request.requestId());
+            if ("PENDING".equals(eventState))
+                return "REDELIVERY_SCHEDULED";
+            if ("QUARANTINED".equals(eventState))
+                return "EVENT_QUARANTINED";
+            return "STATE_CHANGED";
         });
     }
 }

@@ -47,6 +47,10 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     @Autowired
     OutboxMapper outbox;
     @Autowired
+    com.voucherx.reconcile.ReconciliationService reconciliation;
+    @Autowired
+    DeliveryProperties delivery;
+    @Autowired
     FaultInjector faults;
     @Autowired
     ObjectMapper json;
@@ -211,5 +215,26 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         assertThat(outbox.claim(request.eventId(), "new", now + 3000, now + 1001)).isEqualTo(1);
         assertThat(outbox.finish(request.eventId(), "old", "SENT", "OLD", now)).isZero();
         assertThat(outbox.finish(request.eventId(), "new", "SENT", "CONFIRMED", now)).isEqualTo(1);
+    }
+
+    /** SENT 事件仍有投递预算时，回执与真实 PENDING 状态一致，事件身份保持稳定。 */
+    @Test
+    void sentEventWithBudgetSchedulesRedelivery() {
+        var request = accepted();
+        jdbcTemplate.update("UPDATE tb_outbox SET state='SENT', attempts=1 WHERE request_id=?", request.requestId());
+        assertThat(reconciliation.repair(request.requestId())).isEqualTo("REDELIVERY_SCHEDULED");
+        assertThat(outbox.stateByRequest(request.requestId())).isEqualTo("PENDING");
+        assertThat(ledger.find(request.requestId()).eventId()).isEqualTo(request.eventId());
+    }
+
+    /** SENT 事件用尽预算时保留隔离状态，回执明确报告该状态。 */
+    @Test
+    void sentEventWithExhaustedBudgetReportsQuarantine() {
+        var request = accepted();
+        jdbcTemplate.update("UPDATE tb_outbox SET state='SENT', attempts=? WHERE request_id=?",
+                delivery.maxAttempts(), request.requestId());
+        assertThat(reconciliation.repair(request.requestId())).isEqualTo("EVENT_QUARANTINED");
+        assertThat(outbox.stateByRequest(request.requestId())).isEqualTo("QUARANTINED");
+        assertThat(ledger.find(request.requestId()).phase()).isEqualTo("ACCEPTED");
     }
 }

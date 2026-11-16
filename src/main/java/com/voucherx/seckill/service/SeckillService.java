@@ -16,13 +16,11 @@ import java.time.Clock;
 import java.time.ZoneId;
 
 /**
- * 抢券主线编排：前置校验 → MySQL 意图 → Redis 预留 → MySQL 受理和 Outbox。
+ * 抢券业务编排：活动校验、保存请求意图、Redis 预留、提交受理与 Outbox。
  * <p>
- * 本类没有包住全流程的数据库事务；intent 与 accept 分别经过 RequestLedger 的 Spring 事务代理，
- * Redis 操作在两次提交之间。这样留下可恢复的证据，也意味着中间可能停在 UNKNOWN 状态。
- * <p>
- * 不是每次 HTTP 尝试都会新增流水：前置校验失败不会写意图，同一用户复用幂等键会返回原请求。
- * 正常受理后继续阅读 {@link com.voucherx.fulfillment.OutboxDispatcher#dispatch}。
+ * intent 和 accept 各自通过 RequestLedger 的事务代理执行，Redis 预留位于两次数据库提交之间。
+ * 预留结果未知时保留意图，供客户端查询及对账查证；同用户同幂等键复用已有请求。
+ * 受理提交后由 {@link com.voucherx.fulfillment.OutboxDispatcher#dispatch} 接续异步投递。
  */
 @Service
 public class SeckillService {
@@ -45,17 +43,14 @@ public class SeckillService {
     }
 
     /**
-     * 执行抢券编排：幂等重放 → 活动校验 → 全局准入 → 持久化意图 → Redis 预留 → 可靠受理。
+     * 按幂等键处理一次抢券请求，并返回可查询的请求标识与建单状态。
      * <p>
-     * SINGLE 的起始桶固定为 0；BUCKET 使用 floorMod(user, bucketCount)，例如用户 1001、4 桶得到 1。
-     * 此时只决定候选起点，不访问任何 MySQL 桶库存；实际扣减桶稍后由订单事务决定。
+     * 先查询同用户同幂等键的请求；首次执行时校验活动时间和布局，经过全局准入后提交 INTENT/UNKNOWN 意图。
+     * SINGLE 起始桶为 0；BUCKET 按 floorMod(user, bucketCount) 选择起点，例如用户 1001、4 桶得到 1。
      * <p>
-     * intent 先提交 INTENT/UNKNOWN，再向 Lua 传用户、活动、请求、当前/起止毫秒时间、模式、起始桶、布局和代次。
-     * 明确负数结果关闭未预留意图并抛业务错误；Redis 调用异常保留意图并返回 UNKNOWN，不能凭异常释放。
-     * 非负结果（包括 0）表示预留成功，此时 MySQL 库存还没扣。
-     * <p>
-     * accept 经事务代理提交 ACCEPTED 和 Outbox 后，本方法返回 PROCESSING，后台再异步建单。
-     * 前置校验拒绝不新增意图，同用户同幂等键重放复用原请求，不再次预扣。
+     * 预留 Lua 接收用户、活动、请求、时间、布局及代次：非负结果表示预留成功，负数结果触发请求关闭和业务拒绝。
+     * Redis 调用结果未知时返回 UNKNOWN，并保留持久化意图用于查证。
+     * 预留成功后，accept 同事务提交 ACCEPTED/RESERVED 和待发事件，返回 PROCESSING；消费者随后执行 MySQL 建单事务。
      *
      * @param user
      *                      已认证用户 ID
@@ -129,10 +124,10 @@ public class SeckillService {
     }
 
     /**
-     * 返回同用户同幂等键原请求的 ID 和当前阶段映射，不重新创建意图或预留。
+     * 返回同用户同幂等键对应请求的标识和当前状态。
      * <p>
-     * 请求已绑定其他活动时抛 409 冲突；稳定键要由客户端在同一次业务重试中保持一致。
-     * 这是业务幂等，不表示跳过 Controller 之前的认证和本地准入。
+     * 请求绑定的活动与本次活动必须一致，否则抛出冲突；客户端重试同一次操作时保持幂等键稳定。
+     * HTTP 请求先经过认证和本地准入，再进入此服务。
      *
      * @param r
      *                    根据 (user_id, client_key) 找到的原流水
@@ -147,7 +142,7 @@ public class SeckillService {
     }
 
     /**
-     * 把数据库受理阶段转换为对外状态；SUCCESS 只表示购买订单已创建，不表示付款成功或已发券。
+     * 将账本业务阶段映射为对外建单状态；SUCCESS 对应购买订单已创建，付款和发券由交易服务继续处理。
      *
      * @param r
      *              持久化请求流水
@@ -163,11 +158,12 @@ public class SeckillService {
     }
 
     /**
-     * 先读 MySQL 请求账本并验证用户所有权，按业务阶段给出建单进度；没有账本时返回请求不存在，不从订单推导请求状态。
+     * 查询当前用户拥有的抢券请求，按 MySQL 账本阶段返回建单进度。
      * <p>
-     * INTENT→UNKNOWN、ACCEPTED→PROCESSING、CLOSED→FAILED、SUCCEEDED→SUCCESS。
-     * 不根据 Outbox 的 SENT 或 QUARANTINED 推断终态，也不以 Redis 缓存作为最终事实。
-     * SUCCESS 的 orderId 是购买单，付款和发券仍是后续流程。
+     * INTENT 映射 UNKNOWN，ACCEPTED 映射 PROCESSING，CLOSED 映射 FAILED，SUCCEEDED 映射
+     * SUCCESS。
+     * 成功结果中的 orderId 指向购买订单，付款与发券接续交易流程。
+     * 请求不存在或归属不符时抛出 REQUEST_NOT_FOUND。
      *
      * @param user
      *                 当前登录用户 ID

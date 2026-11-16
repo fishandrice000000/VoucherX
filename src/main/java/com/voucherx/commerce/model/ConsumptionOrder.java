@@ -17,7 +17,7 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  * @param couponId
  *                              本次使用的用户券 ID
  * @param lockToken
- *                              本轮锁券随机令牌，防止旧订单误用新锁
+ *                              本次消费锁券的随机归属令牌，与订单 ID 一起绑定用户券
  * @param originalAmount
  *                              消费原价，分
  * @param discountAmount

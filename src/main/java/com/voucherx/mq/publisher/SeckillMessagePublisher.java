@@ -22,14 +22,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 03 的发布器：Java 订单消息 → JSON 持久化 AMQP 消息 → Broker 发布确认分类。
+ * 将业务订单消息编码为持久化 AMQP 消息，并返回 Broker 发布确认分类。
  * <p>
- * 业务 messageId 固定等于 Outbox eventId；每次发送另建 CorrelationData ID，避免混淆重发与新业务。
- * application.yml 启用 correlated confirm、publisher returns 和 mandatory，本实现据此观察
- * ACK/NACK 及不可路由退回。
+ * messageId 使用固定 Outbox eventId，每次发送另建 CorrelationData ID 关联此次确认。
+ * 应用启用 correlated confirm、publisher returns 和 mandatory，以观察 ACK、NACK 和不可路由退回。
  * <p>
- * Confirm 是生产者收到的发布答复，basicAck 是消费者确认交付；实际购买单成功由 MySQL 事务确定。
- * 消费与发布回写可交错，不能依赖 SENT 必然早于 SUCCEEDED。
+ * 发布器与消费者独立运行：发送器记录确认结果，消费者在 MySQL 建单事务提交后确认交付。
  *
  * @see com.voucherx.fulfillment.OutboxDispatcher
  * @see PublishResult
@@ -68,15 +66,13 @@ public class SeckillMessagePublisher {
     }
 
     /**
-     * 先以本次独立 CorrelationData 构造并发送消息，再在配置时限内等待 Confirm。
+     * 发送带独立 CorrelationData 的 AMQP 消息，并在配置时限内等待 Confirm。
      * <p>
-     * 序列化失败抛 IllegalStateException；连接阶段 AmqpConnectException 映射 NOT_SENT，其他 AMQP
-     * 发送异常映射 UNKNOWN。
-     * 有确认后先判断 ACK，NACK 映射 NACKED；ACK 且存在 returned 信息映射 RETURNED，其余为 CONFIRMED。
-     * 等待超时、执行异常或线程中断映射 UNKNOWN，中断时还恢复中断标记。
+     * 序列化失败抛 IllegalStateException；连接阶段失败映射 NOT_SENT，其他 AMQP 异常映射 UNKNOWN。
+     * 确认 NACK 映射 NACKED，ACK 且 returned 映射 RETURNED，其余 ACK 映射 CONFIRMED。
+     * 等待超时、执行异常或中断映射 UNKNOWN，中断时恢复线程标记。
      * <p>
-     * UNKNOWN 不能推断未入队，CONFIRMED 也不表示消费者已成功建单。这里只分类，不改请求/Outbox 或释放 Redis。
-     * 发送器负责安排原事件重试；消息可能已经被消费而确认尚未被本线程处理。
+     * Outbox 按该分类安排后续进度；UNKNOWN 的重发可能形成重复交付，由完整业务身份及消费幂等处理。
      *
      * @param message
      *                       固定业务身份的订单消息
@@ -133,10 +129,9 @@ public class SeckillMessagePublisher {
     }
 
     /**
-     * 用 ObjectMapper 把 record 编码为 JSON 字节，设置 JSON/UTF-8 和 PERSISTENT 投递模式。
+     * 将业务消息编码为 JSON 字节，设置 UTF-8、PERSISTENT 投递模式和固定业务 messageId。
      * <p>
-     * AMQP 属性 messageId 与 JSON 内 messageId 都使用固定 E1；投递次数由数据库 Outbox 记录。
-     * 持久化属性只是消息发布配置，不替代 Broker 确认、订单提交或消费者 ACK。
+     * AMQP messageId 与 JSON messageId 均对应同一 Outbox 事件，投递尝试次数保存在数据库事件记录中。
      *
      * @param payload
      *                    由持久化请求生成的负载

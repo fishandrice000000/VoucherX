@@ -4,10 +4,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * 05 的自动检查及发行预留补偿预算，绑定 voucherx.reconcile。
+ * 自动对账扫描与预留补偿配置，绑定 voucherx.reconcile。
  * <p>
- * 观察窗口和重试等待都以毫秒计；陈旧只触发查证，不构成失败事实。
- * 这里的 maxAttempts 用于补偿执行，与 Outbox 的 DeliveryProperties.maxAttempts 是两套进度。
+ * 观察窗口与重试等待单位为毫秒，观察阈值用于选择需要查证的对象。
+ * maxAttempts 限制补偿执行尝试，Outbox 投递尝试使用 DeliveryProperties 的独立配置。
  *
  * @param enabled
  *                        是否自动 tick 扫描，默认 false；不限制显式 scan 或维护调用

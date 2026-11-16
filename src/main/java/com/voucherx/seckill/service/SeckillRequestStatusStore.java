@@ -13,11 +13,10 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Redis 请求状态的辅助缓存；消费者在数据库提交后尽力更新，用于追踪和观测。
+ * 记录数据库建单结果的 Redis 辅助快照，供过程观测和对账同步。
  * <p>
- * Lua 仅接收成功与失败终态写入，保护 SUCCESS 和 RELEASED。
- * 当前对外查询由 SeckillService 只读取 MySQL 请求流水，缓存不是最终成功依据。
- * Redis 写入失败不会回滚已提交的建单事务。
+ * 消费者在数据库事务提交后尽力写入 SUCCESS 或 FAILED，Lua 负责终态转移保护。
+ * 对外查询由 SeckillService 读取 MySQL 请求账本；缓存写入异常记录日志，已提交订单继续有效。
  */
 @Service
 public class SeckillRequestStatusStore {
@@ -34,7 +33,7 @@ public class SeckillRequestStatusStore {
     }
 
     /**
-     * 数据库建单提交后写成功缓存；不表示订单已付款或用户券已发放。
+     * 数据库建单事务提交后，将购买订单标识同步到 Redis SUCCESS 快照。
      *
      * @param requestId
      *                      抢券请求 ID

@@ -18,10 +18,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.stream.Collectors;
 
 /**
- * 把 HTTP 处理期间抛出的异常统一包装为 ApiResponse，并设置对应的 HTTP 状态。
+ * 将 HTTP 执行异常包装为 ApiResponse，并按 ErrorCode 设置 HTTP 状态。
  * <p>
- * 02 的 SECKILL_BUSY 对应 HTTP 429、业务码 42920；策略或准入依赖不可用对应 HTTP 503、业务码 50322。
- * 该层只组织错误响应，不补偿库存、不归还令牌，也不把 MQ 线程异常转换成 HTTP 响应。
+ * 例如 SECKILL_BUSY 映射 429/42920，准入依赖不可用映射 503/50322；业务服务负责事务及状态处理。
  *
  * @see com.voucherx.admission.SeckillAdmissionService
  * @see com.voucherx.common.api.ErrorCode

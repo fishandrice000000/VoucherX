@@ -8,12 +8,10 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 
 /**
- * 04 的到期清理任务：逐笔关闭超时未付订单，再批量标记可用但已到期的用户券。
+ * 逐笔关闭超时未付订单，再批量标记到期的可用用户券。
  * <p>
- * 默认固定延迟 10 秒，maintenance-mode 时不创建；模拟支付关闭不等于关闭到期扫描。
- * 每笔 expire 经独立服务代理处理自己的事务，整个扫描没有一个跨所有订单的大事务。
- * <p>
- * 任务只负责推进持久化状态，付款和用券路径也按时间判断，不能把扫描恰好准时作为可用性前提。
+ * 默认在上一轮结束后等待 10 秒继续扫描；维护模式下停用该任务。每笔 expire 通过服务代理完成独立事务。
+ * 支付及用券入口同样校验有效期，扫描负责推进持久化到期状态。
  *
  * @see CommerceService#expire
  * @see CommerceRules#releasedState
@@ -36,11 +34,10 @@ public class CommerceExpiryJob {
     }
 
     /**
-     * 分别对 PURCHASE、CONSUMPTION 扫描最多 scanSize 个到期候选，再逐笔 expire 锁单复核并关闭。
+     * 分别扫描 PURCHASE 和 CONSUMPTION 的到期候选，每类最多 scanSize 条，再逐笔锁单复核并关闭。
      * <p>
-     * 单笔异常记日志后继续其他候选；外层扫描异常结束本轮，后续轮次再试。
-     * 最后另执行一条有界 expireAvailable，只修改 AVAILABLE 券；LOCKED 券要经过所属消费单关闭才能安全释放。
-     * 固定延迟是上轮结束后再等待配置间隔，既不是每单截止时刻的定时回调，也不限制整轮执行耗时。
+     * 单笔失败记录日志后继续其他候选；扫描异常结束当前轮次，后续轮次继续处理。
+     * 最后有界更新到期 AVAILABLE 券；LOCKED 券经所属消费单的关闭流程释放。
      *
      * @see com.voucherx.commerce.mapper.UserCouponMapper#expireAvailable
      */

@@ -38,7 +38,7 @@ public class Shop {
      */
     private String address;
     /**
-     * 商户人均价格，单位分；抢券和消费应付金额不从此字段计算。
+     * 商户人均价格，单位分，用于商户详情展示。
      */
     private Long avgPrice;
     /**

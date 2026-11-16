@@ -4,10 +4,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * 03 的 Outbox 调度与消费批次配置，绑定 voucherx.delivery。
+ * Outbox 调度与消费者批次配置，绑定 voucherx.delivery。
  * <p>
- * 扫描批次、RabbitMQ 预取、消费者聚合及数据库事务批次是不同层次；batchEnabled 默认关闭。
- * 事件尝试次数按成功认领累计，包含确认结果未知或发送前中断的尝试，不等于订单事务执行次数。
+ * scanSize 限制扫描量，batchSize、batchBytes 和 batchWaitMillis 约束消费聚合，batchEnabled
+ * 默认关闭。
+ * 事件 attempts 在认领成功时累计，涵盖发送、确认未知及认领后中断等尝试。
  *
  * @param enabled
  *                            是否允许 tick 自动投递；显式调用 dispatch 不检查此开关，默认 true
@@ -69,9 +70,10 @@ public record DeliveryProperties(@DefaultValue("true") boolean enabled,
     }
 
     /**
-     * 按认领尝试次数计算发布失败等待：基础等待乘 2 的 attempt-1 次方，指数限制在 0 到 10，结果再取与 60000 的较小值。
+     * 按认领尝试次数计算发布失败的指数退避，最多等待 60000 毫秒。
      * <p>
-     * 默认基础 1000 毫秒时依次为 1、2、4 秒等，最多 60 秒；消费 defer 使用固定 retryMillis，不调用此方法。
+     * 指数取 attempt-1 并限制到 0～10；基础等待默认 1000 毫秒，对应 1、2、4 秒等序列。
+     * 消费 defer 使用单独配置的固定 retryMillis。
      *
      * @param attempt
      *                    当前累计认领次数，正常从 1 开始

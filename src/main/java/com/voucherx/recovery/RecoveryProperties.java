@@ -4,10 +4,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * 06 恢复扫描配置，对应 voucherx.recovery；默认每页 200 条、单次遍历最多 100000 条。
+ * 活动恢复扫描配置，绑定 voucherx.recovery；默认每页 200 条、单次遍历最多 100000 条。
  * <p>
- * pageSize 限制一次查询数量，maxRecords 限制一次请求遍历或订单扫描的累计数量，
- * 不是所有阶段共用的总预算。分页仍在同一阶段事务与活动独占锁内，不代表分批提交或时间上限。
+ * pageSize 限制单次查询量，maxRecords 分别限制一次请求遍历或订单扫描的累计数量。
+ * 分页期间阶段事务和活动独占锁持续有效。
  *
  * @param pageSize
  *                       每页数量，范围 1～1000

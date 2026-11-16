@@ -3,17 +3,16 @@ package com.voucherx.reconcile;
 import com.voucherx.fulfillment.RequestRecord;
 
 /**
- * 05 的纯事实分类：超时只触发检查，动作由请求、订单、预留归属及投递状态决定。
+ * 根据请求、订单、预留归属和投递状态选择对账动作的纯分类器。
  * <p>
- * 此枚举不访问数据库或 Redis，不执行关闭、重投或返还；输入是调用方已经取得的观察结果。
- * ISOLATE 是建议结论，不是请求 phase，也不是补偿记录中的 ISOLATED 状态。
+ * 调用者提供已读取的观察结果，修复服务负责执行建议。ISOLATE 表示需要隔离查证的建议，补偿执行状态另由补偿记录表示。
  *
  * @see ReconciliationService#diagnose
  * @see ReconciliationService#repair
  */
 public enum ReconcileDecision {
     /**
-     * 找到匹配订单且请求已 SUCCEEDED，建议尽力同步 Redis 成功缓存，不再扣库存。
+     * 请求为 SUCCEEDED 且匹配订单存在时，同步 Redis 成功结果快照。
      */
     SYNC_RESULT,
     /**
@@ -21,7 +20,7 @@ public enum ReconcileDecision {
      */
     ACCEPT_RESERVATION,
     /**
-     * 无订单、请求 CLOSED/RESERVED，建议进入持锁补偿流程；不是直接授权 INCR。
+     * 请求为 CLOSED/RESERVED 且订单不存在时，进入持锁补偿协议。
      */
     RELEASE_RESERVATION,
     /**
@@ -29,7 +28,7 @@ public enum ReconcileDecision {
      */
     REPLAY_EVENT,
     /**
-     * 当前事实无需本轮修改，例如已释放或事件仍待处理；不是订单成功证明。
+     * 当前事实保持等待，例如预留已释放或事件仍待处理。
      */
     WAIT,
     /**
@@ -38,16 +37,15 @@ public enum ReconcileDecision {
     ISOLATE;
 
     /**
-     * 按分支优先级选择建议，不以“很久没完成”作为失败事实。
+     * 根据观察结果按优先级选择动作。
      * <ol>
-     * <li>有订单时，仅订单归属匹配且请求 SUCCEEDED 才同步；其他组合一律隔离。</li>
-     * <li>无订单但请求声称 SUCCEEDED 时隔离；INTENT 要求 reservationMatches 才继续受理。</li>
-     * <li>CLOSED 仅在 reservation=RESERVED 时建议释放，否则等待。</li>
-     * <li>ACCEPTED 缺失事件或 QUARANTINED 时隔离，SENT 时建议重投，其余非空投递状态都等待。</li>
+     * <li>订单存在且归属匹配、请求 SUCCEEDED 时同步结果，其他组合隔离查证。</li>
+     * <li>订单不存在而请求 SUCCEEDED 时隔离；INTENT 在预留归属明确时继续受理，否则隔离。</li>
+     * <li>CLOSED/RESERVED 建议释放，CLOSED 的其他预留状态等待。</li>
+     * <li>ACCEPTED 的事件缺失或 QUARANTINED 时隔离，SENT 时建议重投，其他投递状态等待。</li>
      * </ol>
      * <p>
-     * CLOSED 分支不以 reservationMatches 决定是否进入补偿；真正释放还须 prepare/execute 与 Lua 重新验证。
-     * 本方法不检查活动 NORMAL 或当前代次，repair 和各事务入口另行保护；建议不是跨系统一致快照。
+     * 修复入口继续核对活动和代次；释放动作通过 prepare、execute 和 Lua 校验当前身份及归属。
      *
      * @param r
      *                               已存在的请求账本快照

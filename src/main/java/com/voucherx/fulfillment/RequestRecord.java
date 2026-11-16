@@ -50,10 +50,9 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
     }
 
     /**
-     * 从数据库账本快照构造订单消息，把 eventId 映射为负载中的 messageId。
+     * 根据账本快照构造待发布的订单消息，将 eventId 映射为 messageId。
      * <p>
-     * 例如 R1/E1 每次重发都保持这两个业务 ID、用户和布局身份；新的只是发送尝试 CorrelationData。
-     * createdAt 来自意图创建时刻，不是本次重发时刻。构造对象不等于已发布，也不会推进请求阶段。
+     * 重发保持 requestId、eventId、用户、活动和布局身份；createdAt 使用意图创建时刻，发布尝试由发送器另行标识。
      *
      * @return 等待发布器序列化为 JSON 的订单消息
      * @see com.voucherx.seckill.model.SeckillOrderMessage
@@ -65,10 +64,9 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
     }
 
     /**
-     * 比较请求、事件、用户、活动、代次、模式、计划起始桶和布局版本，供建单、关闭与重试路径核对身份。
+     * 比较请求、事件、用户、活动、代次、模式、起始桶和布局版本的完整业务身份。
      * <p>
-     * 不比较 createdAt；重发身份不能用 CorrelationData 或通道 deliveryTag 代替。
-     * 此比较本身不加锁，也不判断活动 NORMAL 或请求可执行阶段，守卫在调用前后完成这些检查。
+     * 调用者在需要时持锁，并结合活动状态与请求阶段判断本次执行资格。
      *
      * @param m
      *              必需身份已通过入口检查的非空消息

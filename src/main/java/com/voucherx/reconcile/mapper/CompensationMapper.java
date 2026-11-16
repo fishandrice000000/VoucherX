@@ -52,9 +52,9 @@ public interface CompensationMapper {
     CompensationRecord lock(@Param("id") String id);
 
     /**
-     * 按请求 ID 写入服务层计算的状态、次数及下次时间；SQL 不自带 PENDING/旧次数/代次条件。
+     * 按请求 ID 写入服务层计算的补偿状态、次数和下次执行时间。
      * <p>
-     * 次数是直接赋值，调用方必须持补偿行锁再由原 attempts 计算加一，并与请求释放标记及审计共同提交。
+     * 调用者持补偿行锁，以读取的 attempts 计算下一次值，并与请求释放标记、审计共同提交。
      *
      * @param id
      *                     原请求 ID

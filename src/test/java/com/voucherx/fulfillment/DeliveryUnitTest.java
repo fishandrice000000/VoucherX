@@ -15,10 +15,10 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * 03 的消费确认顺序单元测试，订单服务、账本、缓存及 RabbitMQ 通道都使用 Mockito 模拟。
+ * 通过 Mockito 验证消费确认顺序，模拟订单服务、账本、缓存及 RabbitMQ 通道。
  * <p>
- * inOrder 验证“事务服务返回 → 状态更新 → ACK”等调用次序，并覆盖一次有界的批失败逐条回退。
- * 没有真实数据库，因此不能单独证明 SQL 回滚；真实事务和消息交付需结合 DeliveryComponentTest 与库存集成测试。
+ * inOrder 检查事务服务返回、状态更新与 ACK 的调用顺序，并验证批处理失败后的一次逐条回退。
+ * 真实事务回滚与组件交付验证见 DeliveryComponentTest 及库存集成测试。
  *
  * @see com.voucherx.mq.consumer.SeckillOrderConsumer
  * @see DeliveryComponentTest
@@ -117,7 +117,7 @@ class DeliveryUnitTest {
     }
 
     /**
-     * 模拟旧投递异常，验证只 ACK 原交付，不调用账本关闭或写状态缓存。
+     * 模拟失效交付异常，验证消费者 ACK 本次交付，并保持账本和状态缓存原值。
      *
      * @throws Exception
      *                       测试序列化或通道交互异常

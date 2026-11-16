@@ -21,12 +21,12 @@ public enum ErrorCode {
                     "请勿重复抢购"), SECKILL_STOCK_UNAVAILABLE(503, 50320, "秒杀库存状态不可用，请稍后重试"), SECKILL_PUBLISH_FAILED(503,
                             50321, "秒杀请求受理失败，请稍后重试"),
     /**
-     * 02 预算不足：HTTP 429、业务码 42920，表示系统当前准入预算不足，不是活动库存售罄。
+     * 准入预算不足：HTTP 429、业务码 42920。
      */
     SECKILL_BUSY(429, 42920,
             "系统繁忙，请稍后重试"),
     /**
-     * 02 策略或 Redis 准入依赖不可用：HTTP 503、业务码 50322，不能按正常放行处理。
+     * 准入策略或 Redis 依赖不可用：HTTP 503、业务码 50322。
      */
     SECKILL_ADMISSION_UNAVAILABLE(503, 50322, "秒杀准入服务暂不可用，请稍后重试"),
 

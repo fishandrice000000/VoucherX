@@ -7,13 +7,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 02 的请求侧编排：HTTP 入口先过本地突发保护，活动校验后再过 Redis 共享和活动预算。
+ * 请求准入编排：HTTP 入口执行本地突发保护，活动校验后申请 Redis 共享和活动预算。
  * <p>
- * 令牌表示当前允许进入多少新工作，会按时间补充；它不同于活动剩余库存。
- * 新请求被拒绝时尚未写意图或预留库存，但先前已消耗的本地令牌不会因后续拒绝而返还。
+ * 令牌代表按时间补充的新增工作预算。新请求通过准入后才写入意图和预留库存；
+ * 入口各层独立计费，后续拒绝时已消耗的本地令牌保持已使用状态。
  * <p>
- * OFF 直接绕过准入。FIXED/ADAPTIVE 均可使用两层保护，ADAPTIVE 只动态调整共享 Redis 策略。
- * 已有可靠受理请求不会因入口降速被删除。
+ * OFF 直接通过。FIXED 和 ADAPTIVE 可使用两层保护，ADAPTIVE 动态调整共享 Redis 策略。
+ * 已受理请求由持久化账本及 Outbox 持续推进。
  *
  * @see com.voucherx.seckill.controller.SeckillController#seckill
  * @see com.voucherx.seckill.service.SeckillService#seckill(Long, Long, String)
@@ -63,11 +63,11 @@ public class SeckillAdmissionService {
     }
 
     /**
-     * 活动存在且时间有效后，为本次新请求申请共享桶和活动桶各一个令牌。
+     * 为已通过活动校验的新请求申请共享桶和活动桶各一个令牌。
      * <p>
-     * OFF 或 global.enabled=false 时直接通过。两桶必须同时满足才扣减；预算不足映射 429，
-     * 策略缺失/失效/非法或 Redis 数据访问失败映射 503，不因依赖异常静默放行。
-     * 调用方应把此步骤放在新意图和库存预留前；同幂等键已命中旧请求时业务服务可在此前直接重放。
+     * OFF 或 global.enabled=false 时直接通过。两桶预算同时满足才扣减；预算不足映射 429，
+     * 策略缺失、失效、非法或 Redis 数据访问失败映射 503。
+     * 该步骤位于新意图和库存预留前；同幂等键的既有请求由业务服务直接重放查询结果。
      *
      * @param voucherId
      *                      已通过活动校验的活动 ID

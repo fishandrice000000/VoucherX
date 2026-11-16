@@ -11,13 +11,12 @@ import java.time.Clock;
 import java.util.UUID;
 
 /**
- * 03 的发送执行者：HTTP 已提交受理和待发事件后，由调度线程接续发送。
+ * 接续已提交受理记录的消息发送器，通过扫描和认领 Outbox 事件驱动异步建单。
  * <p>
- * 扫描、认领和结果回写是独立数据库操作，等待 Broker Confirm 时不持有包住全流程的数据库事务。
- * 租约到期允许接手，却不终止旧线程或撤回其网络发送；重复消息靠账本和订单幂等处理。
+ * 扫描、认领、结果回写分别访问数据库，Broker 确认等待发生在这些操作之间。
+ * 租约到期可由其他执行者接手；各次发送保留同一业务身份，由账本和订单处理重复交付。
  * <p>
- * SENT 是发布结果，SUCCEEDED 是建单结果，消费提交可能早于本线程写 SENT。
- * QUARANTINED 也只是投递隔离，不能直接映射成用户业务 FAILED 或返还 Redis 库存。
+ * SENT 记录发布确认，QUARANTINED 记录投递隔离；请求的建单阶段保存在账本中，由消费事务推进。
  *
  * @see RequestLedger#accept
  * @see com.voucherx.mq.publisher.SeckillMessagePublisher
@@ -72,7 +71,7 @@ public class OutboxDispatcher {
      * </ol>
      * <p>
      * 重试时间和租约用本轮起始 now 计算，不是每次网络等待完成后重新取时刻；慢扫描时不能据此推断还剩完整租期。
-     * finish 必须匹配本次令牌，旧认领者即使仍发送了消息也不能覆盖接手者的回写。
+     * finish 必须匹配本次令牌，先前的认领者即使仍发送了消息也不能覆盖接手者的回写。
      * 显式调用本方法不检查 enabled，测试可关闭自动扫描后手动触发。
      *
      * @return 本轮本次令牌成功回写 SENT 的行数；不是已完成订单数，也不是所有实际到达队列的消息数
@@ -119,10 +118,9 @@ public class OutboxDispatcher {
     }
 
     /**
-     * 用 eventId、claim_token 和 CLAIMED 状态条件更新发布结果并清空令牌。
+     * 以 eventId、claim_token 和 CLAIMED 状态条件回写发布结果、下次发送时间并清空令牌。
      * <p>
-     * SQL 不单独要求租约仍未到期；关键是尚未被新的令牌或其他处理改写。
-     * 租约已到期但未被接手时旧令牌仍可能回写；一旦换了新令牌，旧持有者更新数为 0。
+     * 条件由当前令牌归属决定；令牌仍匹配时原认领者可回写，接手或 defer 改写令牌后其更新数为 0。
      *
      * @param id
      *                   固定 Outbox 事件 ID

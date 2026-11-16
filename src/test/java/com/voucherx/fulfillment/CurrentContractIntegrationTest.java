@@ -71,7 +71,9 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(stock.stock(1L)).isEqualTo(9);
     }
 
-    /** 服务层也拒绝缺少幂等键的直接调用；不存在账本时不再回查同用户订单。 */
+    /**
+     * 验证直接服务调用必须携带幂等键，且请求查询以当前用户拥有的请求账本为依据。
+     */
     @Test
     void serviceRequiresKeyAndLedgerEvenWhenAnOrderExists() {
         assertThatThrownBy(() -> service.seckill(1L, 1L, null)).isInstanceOfSatisfying(BusinessException.class,
@@ -85,7 +87,7 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
                 ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.REQUEST_NOT_FOUND));
     }
 
-    /** 全新结构可直接加载演示种子并显式建立门禁；重复初始化不重置已变动的 Redis 库存。 */
+    /** 验证表结构可加载演示种子并建立活动门禁，重复初始化保留当前 Redis 库存。 */
     @Test
     void freshSchemaAndSeedInitializeCurrentState() {
         new ResourceDatabasePopulator(new ClassPathResource("db/seed.sql")).execute(dataSource);
@@ -97,7 +99,7 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(stock.stock(1L)).isEqualTo(7);
     }
 
-    /** 只写完 gate 的中断可以继续初始化；已有库存缺 gate 或 gate 代次不符时不自动猜测补齐。 */
+    /** 验证仅完成 gate 写入时可继续初始化，已有库存的门禁须完整且代次匹配。 */
     @Test
     void initializationResumesOnlyWithConsistentExplicitState() {
         activity(1);
@@ -156,7 +158,9 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
         assertThat(stock.stock(1L)).isEqualTo(10);
     }
 
-    /** 直接省略旧 Lua 参数时不再补默认值，预留、释放和准入都不能产生写入。 */
+    /**
+     * 验证 Lua 拒绝缺少必需参数的调用，并保持预留、释放和准入数据原值。
+     */
     @Test
     void luaRequiresExplicitGenerationAndAdmissionMode() {
         activity(1);

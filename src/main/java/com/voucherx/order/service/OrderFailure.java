@@ -1,10 +1,9 @@
 package com.voucherx.order.service;
 
 /**
- * 异步建单已明确判定的业务拒绝原因；通过 OrderBusinessException 传给消费者。
+ * 异步建单的业务拒绝分类，通过 OrderBusinessException 交给消费者。
  * <p>
- * 当前消费者核验请求身份后关闭这类失败请求；基础设施异常另走 Outbox 重试。
- * LOCAL_SOLD_OUT 表示本次有界候选耗尽，不能解释成全活动售罄。
+ * 消费者核对请求身份后处理关闭；LOCAL_SOLD_OUT 表示有界候选桶耗尽，SOLD_OUT 表示全活动余量为零。
  *
  * @see OrderBusinessException
  * @see com.voucherx.mq.consumer.SeckillOrderConsumer

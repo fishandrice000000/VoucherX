@@ -54,7 +54,7 @@ public class RequestLedger {
      * @param userId
      *                   已认证用户 ID
      * @param key
-     *                   客户端幂等键或服务端生成的键
+     *                   该用户提交的客户端幂等键
      * @return 已有流水；没有命中时为 {@code null}
      */
     public RequestRecord byKey(long userId, String key) {
@@ -62,20 +62,17 @@ public class RequestLedger {
     }
 
     /**
-     * 确认活动 NORMAL 并锁住控制行，取当前 epoch，再为新请求生成 requestId 和固定 eventId，插入 INTENT/UNKNOWN。
+     * 在活动 NORMAL 的共享锁保护下创建请求意图，生成 requestId 和固定 eventId，保存 INTENT/UNKNOWN。
      * <p>
-     * 此时只有可核对的意图，没有 Outbox 或订单，Redis 还没预扣。
-     * 主线 SeckillService 没有外层事务，经本方法 Spring 事务代理正常返回后意图已提交，再继续 Redis。
-     * <p>
-     * 注解使用默认 REQUIRED；若调用方已有事务则加入它，提交取决于外层结束，不能把所有方法返回都当作独立提交。
-     * 例如批量测试夹具会在同一外层事务中调用 intent 与 accept。
+     * SeckillService 通过事务代理调用：意图提交后继续 Redis 预留，再进入可靠受理。
+     * 事务传播为 REQUIRED；独立调用在代理返回时提交，已有外层事务时加入该事务，提交由最外层完成。
      *
      * @param user
      *                    已认证用户 ID
      * @param voucher
      *                    活动 ID
      * @param key
-     *                    用户下唯一的客户端幂等键或本次生成的键
+     *                    同一用户下唯一并绑定活动的客户端幂等键
      * @param mode
      *                    SINGLE 或 BUCKET
      * @param bucket
@@ -112,17 +109,12 @@ public class RequestLedger {
     }
 
     /**
-     * 在同一个 MySQL 事务中确认受理依据并留下待发事件，接续已成功的 Redis 预留。
-     * <ol>
-     * <li>普通读出请求所属活动，再取得 NORMAL 活动共享锁。</li>
-     * <li>FOR UPDATE 锁请求，核对它的 epoch 等于活动当前代次。</li>
-     * <li>只有 INTENT 才写 ACCEPTED/RESERVED，并用固定 eventId 插入默认 PENDING 的 Outbox。</li>
-     * </ol>
+     * 在同一个 MySQL 事务中，将已获得 Redis 预留的请求记为可靠受理并插入待发事件。
      * <p>
-     * 状态更新与事件插入一起提交或回滚；非 INTENT 不重复写事件，直接返回当前流水，并不强制把其他阶段改回受理。
-     * 主线没有外层事务，代理正常返回才表示这次受理提交完成；已有外层事务时按 REQUIRED 加入。
-     * <p>
-     * 本方法不验证 Redis 归属证据本身，调用者须已确认预留成功；这里不再扣 Redis、不发送 MQ，也不创建订单。
+     * 先读取所属活动并取得 NORMAL 共享锁，再 FOR UPDATE 锁请求并核对代次。
+     * INTENT 更新为 ACCEPTED/RESERVED，固定 eventId 写入 PENDING Outbox；其他阶段返回当前账本快照。
+     * 状态和事件共同提交或回滚，调用者负责先确认 Redis 预留成功。
+     * 事务采用 REQUIRED，提交时刻由当前最外层事务决定。
      *
      * @param id
      *               已有 Redis 预留成功依据的请求 ID
@@ -147,14 +139,11 @@ public class RequestLedger {
     }
 
     /**
-     * 在扣库存、插单的同一事务内，按活动共享锁 → 请求行锁保护受理依据。
+     * 在建单事务内依次取得活动共享锁与请求行锁，校验消息身份和请求执行条件。
      * <p>
-     * 先核对消息和流水身份；找不到流水或身份不符抛 INVALID_REQUEST。
-     * 身份匹配后，活动非 NORMAL 或代次不符抛 StaleDeliveryException；请求 CLOSED 则抛 REQUEST_CLOSED。
-     * 只允许 ACCEPTED 或 SUCCEEDED，其他阶段也停止本次投递。
-     * <p>
-     * 保留 SUCCEEDED 是为了同请求重投能继续查询原订单，而不是再次扣库存。
-     * 本方法自己没有事务注解，调用者须让这些锁覆盖后续库存和订单操作，直到一起提交或回滚。
+     * 身份缺失或不符抛 INVALID_REQUEST；身份匹配后，冻结、代次失效或阶段尚未就绪抛 StaleDeliveryException。
+     * CLOSED 抛 REQUEST_CLOSED；ACCEPTED 可首次建单，SUCCEEDED 可复用已有订单。
+     * 调用者保持这些锁，直至库存、订单和请求结果共同提交或回滚。
      *
      * @param message
      *                    已解析且必需字段完整的 MQ 消息
@@ -179,11 +168,10 @@ public class RequestLedger {
     }
 
     /**
-     * 在建单调用者的现有事务内，只把 ACCEPTED 更新为 SUCCEEDED 并关联订单。
+     * 在调用者建单事务中，将 ACCEPTED 记为 SUCCEEDED 并关联购买订单 ID。
      * <p>
-     * 与条件扣库存、插购买订单和固定付款规则快照一起提交。reservation 不在这里改成 RELEASED，
-     * 它仍可记录原预留事实，不能因此再把成功占用重复统计成未结工作。
-     * 本方法不单独开启事务，也不发送 ACK；消费者要等订单服务事务代理返回。
+     * 该修改与库存扣减、订单及权益快照共同提交；reservation 保留预留事实。
+     * 消费者在事务代理成功返回后继续同步结果和 ACK。
      *
      * @param id
      *                    已通过守卫的请求 ID
@@ -195,10 +183,9 @@ public class RequestLedger {
     }
 
     /**
-     * 仅在 Redis 明确返回拒绝结果时，将仍为 INTENT 的请求关闭为 CLOSED/NONE，并保存原因。
+     * 将 Redis 明确拒绝的 INTENT 记为 CLOSED/NONE，并保存拒绝原因。
      * <p>
-     * 先锁活动再锁请求，数据库修改在本方法事务中提交。因为已明确没有预留，本方法不增加 Redis 库存。
-     * Redis 超时或结果未知时不能走此分支，应保留意图供核对。
+     * 按活动、请求顺序持锁后提交关闭结果；结果未知的请求保留意图，由后续查证处理。
      *
      * @param id
      *                   已存在且 Redis 明确未预留成功的请求 ID
@@ -215,13 +202,10 @@ public class RequestLedger {
     }
 
     /**
-     * 在已经回滚的建单调用之外，核对活动、代次及消息身份，处理确定业务拒绝。
+     * 在建单事务回滚后核对消息与当前账本，决定是否接受本次业务拒绝。
      * <p>
-     * 身份不符、活动异常、代次不符或已 SUCCEEDED 时返回 false；只有仍为 ACCEPTED 才写 CLOSED。
-     * 其他通过检查的非成功阶段可直接返回 true，因此返回值表示允许消费者确认此拒绝，不等于本次一定改过数据库。
-     * <p>
-     * 消费者仅在 true 时写失败缓存并 ACK；false 时 NACK，不覆盖真实请求结果。
-     * 关闭事实不自动增加 Redis 库存，预留释放另走补偿屏障。
+     * 身份、活动、代次须有效，且请求尚未成功；满足条件的 ACCEPTED 更新为 CLOSED，其他已符合拒绝条件的阶段可直接返回 true。
+     * 消费者据 true 写失败快照并 ACK，据 false 隔离交付。预留返还由补偿协议接续。
      *
      * @param message
      *                    被判定为业务拒绝的投递消息
@@ -246,13 +230,11 @@ public class RequestLedger {
     }
 
     /**
-     * 在单独的服务调用事务中，为暂时性建单异常重新安排原事件。
+     * 在活动和请求锁保护下，为暂时性建单异常重新安排同一 Outbox 事件。
      * <p>
-     * 按活动与请求锁检查身份、非终态、正常状态和 epoch，然后按已有 attempts 写 PENDING 或次数用尽后的 QUARANTINED，
-     * 下次时间为当前时刻加固定 retryMillis，并清空发送认领令牌。
-     * 请求保留受理和预留，eventId 不变；重试依据统一保存于 Outbox，不生成新的业务请求。
-     * <p>
-     * 消费者等此调用正常返回后才 NACK 原交付。检查不满足会直接返回，不能单凭 void 返回就认定必定产生了新重试写入。
+     * 校验身份、活动 NORMAL、当前代次及非终态；按累计 attempts 写 PENDING 或 QUARANTINED，设置固定 retryMillis
+     * 等待并清空令牌。
+     * 原请求、预留和 eventId 保持关联。校验不满足时直接返回，消费者按该调用的实际执行路径结束本次交付。
      *
      * @param message
      *                    原投递消息
@@ -270,9 +252,9 @@ public class RequestLedger {
     }
 
     /**
-     * 记录请求诊断原因，并把对应事件隔离，停止自动投递。
+     * 记录请求诊断原因，并将对应事件隔离以停止自动投递。
      * <p>
-     * 本方法没有独立事务注解；两条写入是否同事务取决于调用方，不能假定自动原子提交。
+     * 请求与事件的两次更新使用调用者提供的事务边界。
      *
      * @param id
      *                   请求 ID

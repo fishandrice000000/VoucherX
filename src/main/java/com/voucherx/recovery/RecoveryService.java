@@ -19,19 +19,19 @@ import java.util.*;
 import java.util.function.Consumer;
 
 /**
- * 06 活动冻结与恢复的编排入口：先阻止发行状态变化，再根据 MySQL 事实重建 Redis，校验后复流。
+ * 活动冻结与恢复的编排入口：建立发行写入屏障，根据数据库事实重建 Redis，再校验复流条件。
  * <p>
  * 阅读顺序为 {@link #freeze(long, String)} → {@link #recover(long)} → plan → rebuild
  * → resume。
- * 活动控制行使用独占锁，与正常链路的活动共享锁互斥；epoch 递增后，旧请求和旧消息不能继续按旧身份写入。
- * 这里冻结的是受理、建单和补偿等发行链路，支付与核销不改变已发行订单数，仍可独立推进。
+ * 活动控制行的独占锁与正常发行链路的共享锁互斥；请求和消息必须匹配控制行当前 epoch 才能写入。
+ * 支付与核销可独立推进，它们保持活动已发行订单数量不变。
  * <p>
- * 以总额 100、数据库余量 80、已建单 20、在途受理 5 为例，恢复出的 Redis 可用额度为 75，而非 80。
- * 库存、用户资格 Set、归属 Hash 经 Lua 一次替换；请求 Hash 逐条重建，MySQL 与 Redis 分别提交。
- * 因此阶段失败时必须按持久化状态重入，不能把 Redis 写入当成数据库事务的一部分。
+ * 总额 100、数据库余量 80、已建单 20、在途受理 5 时，Redis 可用额度为 75。
+ * Lua 一次发布库存、资格及归属，请求 Hash 逐条重建；数据库与 Redis 各自提交。
+ * 阶段失败后由持久化阶段标记决定继续执行的位置。
  * <p>
- * TransactionTemplate 使用默认 REQUIRED 传播：维护入口没有外层事务时，各阶段分别提交。
- * 若外层另包事务，不能再假定这些调用之间已有独立提交的恢复检查点。
+ * TransactionTemplate 使用 REQUIRED 传播。维护入口无外层事务时，各阶段分别提交；
+ * 存在外层事务时，各阶段加入该事务。
  *
  * @see RecoveryPlan
  * @see com.voucherx.fulfillment.ActivityGate
@@ -103,17 +103,16 @@ public class RecoveryService {
     }
 
     /**
-     * 建立数据库冻结屏障，并把当前代次的冻结门禁写入 Redis。
+     * 建立数据库冻结屏障，并将对应代次的冻结门禁写入 Redis。
      * <p>
-     * 第一个事务先确认活动存在，再独占锁定控制行；只有 NORMAL 才创建恢复 ID、递增 epoch，
-     * 并同时保存 FROZEN 状态、恢复任务和审计。重复冻结复用已有任务，不再次增加代次。
-     * 已持有活动共享锁的事务先结束；之后正常链路不能越过数据库状态检查。
+     * 第一个事务确认活动存在并独占锁定控制行。NORMAL 状态下创建恢复 ID、递增 epoch，
+     * 将 FROZEN、恢复任务和审计一起保存；重复冻结复用既有任务。
+     * 已持有活动共享锁的发行事务先完成，后续事务按冻结状态拒绝发行写入。
      * <p>
-     * 第二个事务重新取得控制行独占锁，再写 Redis 的 FROZEN/epoch；它会读取并发恢复后的最新状态。
-     * 两次写入之间不是跨库原子操作：即使 Redis 门禁尚未更新，数据库屏障也已限制持久化受理与建单。
-     * 随后 {@link #recover(long)} 扫描留下的意图并重建，而不是相信旧 Redis 库存。
+     * 第二个事务再次取得活动独占锁，读取控制状态后写入 Redis FROZEN/epoch。
+     * 两次提交之间数据库屏障已经生效；后续 recover 根据数据库请求及订单事实制定重建计划。
      * <p>
-     * RECOVERY_FROZEN 故障点位于上述事务回调返回之后；维护入口无外层事务时，冻结已提交。
+     * RECOVERY_FROZEN 位于两个事务回调返回后；维护入口无外层事务时，两次提交均已完成。
      *
      * @param voucher
      *                    要冻结的活动 ID
@@ -154,15 +153,14 @@ public class RecoveryService {
     }
 
     /**
-     * 从数据库保存的阶段继续一次恢复；已经 NORMAL 时直接返回，不创建新的冻结任务。
+     * 从持久化阶段继续活动恢复；NORMAL 状态直接返回当前控制快照。
      * <p>
-     * 先在独占锁内补齐 Redis 冻结门禁；随后按阶段调用 plan、rebuild、resume。
-     * 每一阶段重新加锁并再次核对状态，避免用入口处的旧快照直接修改。
-     * 在无外层事务的维护调用中，已完成阶段保留提交结果，失败阶段的数据库修改回滚。
+     * 先在活动独占锁内补齐 Redis 冻结门禁，再按阶段调用 plan、rebuild 和 resume。
+     * 每个阶段重新取得控制行锁并核对状态。维护入口无外层事务时，已完成阶段保留提交结果，
+     * 异常阶段的数据库修改回滚。
      * <p>
-     * 例如 Redis 已发布但数据库仍为 RECONCILING 时，下一次会再次按同一快照覆盖发布；
-     * REBUILDING 表示发布阶段已提交，下一次只需进行复流校验。
-     * 事实不一致、Redis 异常或预算超限会抛出异常，调用者应排查后重试，不应绕过校验强行复流。
+     * RECONCILING 阶段按持久化计划执行 Redis 发布；REBUILDING 阶段执行复流校验。
+     * 事实不一致、Redis 访问异常或扫描预算超限时抛出异常，活动保持受控状态等待再次恢复。
      *
      * @param voucher
      *                    已冻结活动的 ID
@@ -227,16 +225,15 @@ public class RecoveryService {
     }
 
     /**
-     * 把冻结时留下的请求归一化为新代次事实，并保存可重建的额度计划。
+     * 在 FROZEN 阶段归一化请求，并保存新恢复代次的重建计划。
      * <p>
-     * 仅处理 FROZEN。逐条核对请求与同请求、同活动、同用户订单的对应数量：SUCCEEDED 必须有一单，
-     * 其他阶段必须没有订单；冲突时中止。INTENT 若同时持有 owners 归属及旧代次、用户、活动证据，
-     * 转为 ACCEPTED/RESERVED；缺少肯定证据则关闭为 CLOSED/NONE。
-     * 这里允许关闭的前提是新代次冻结门禁已封住旧预扣，不能把此规则直接搬到在线对账。
+     * 逐条核对请求与同请求、活动、用户订单的对应关系：SUCCEEDED 应有一单，其余阶段应无订单。
+     * INTENT 同时具有 owners 归属、预留代次、用户和活动证据时转为 ACCEPTED/RESERVED，
+     * 其余 INTENT 在当前冻结门禁已生效的条件下关闭为 CLOSED/NONE。
      * <p>
-     * 所有请求绑定到新 epoch；ACCEPTED 保留原 eventId 并重置为 PENDING 待投递，其他阶段结束其 Outbox。
-     * 再检查同一用户多份受理、受理与已有订单冲突，按数据库库存计算 A/R/C。
-     * 计划及 RECONCILING 状态在同一阶段事务中保存；Redis 读写本身不参与回滚。
+     * 请求绑定当前 epoch。ACCEPTED 保留 eventId 并将 Outbox 设为 PENDING，其余阶段结束 Outbox。
+     * 核对同用户重复受理和受理与订单冲突后，按数据库事实计算 A/R/C。
+     * 计划与 RECONCILING 状态在同一数据库事务中保存，Redis 操作独立生效。
      *
      * @param c
      *              当前事务独占锁下的控制快照；不是 FROZEN 时不操作
@@ -320,19 +317,17 @@ public class RecoveryService {
     }
 
     /**
-     * 按已保存的计划重建 Redis，并在保持冻结的情况下发布库存、资格和归属。
+     * 在 RECONCILING 阶段按保存的计划重建 Redis，并保持活动冻结。
      * <p>
-     * 仅处理 RECONCILING；先重新计算并比较 A/R/C，变化则中止。
-     * 以 recoveryId 为前缀清理并重建三份暂存结构：库存置为 A，已有订单 C 与受理请求 R 均占用用户资格和归属。
-     * 请求 Hash 直接在正式键逐条写入：SUCCEEDED → SUCCESS，ACCEPTED → PROCESSING，其他阶段 → RELEASED。
-     * 账本请求的 Hash 清除过期时间；putAll 覆盖给定字段，不清理未列出的旧字段。
+     * 重新计算并核对 A/R/C，按 recoveryId 建立暂存库存、用户资格和归属：库存为 A，R+C 占用资格和归属。
+     * 请求 Hash 逐条写入正式键，SUCCEEDED 映射 SUCCESS，ACCEPTED 映射 PROCESSING，其余映射 RELEASED。
+     * putAll 覆盖本次给定字段，账本请求 Hash 使用持久保存。
      * <p>
-     * Lua 校验冻结代次、暂存库存及成员数量，再一次替换正式库存/资格/归属，登记 publishedRecovery。
-     * 这一原子范围不包含逐条请求 Hash，也不包含 MySQL。发布后仍冻结，随后数据库将关闭请求及其补偿标为已释放，
-     * 并把阶段推进到 REBUILDING；此处不逐笔给 Redis 加库存。
+     * Lua 核验冻结代次、暂存库存及成员数后，一次替换库存、资格和归属并登记 publishedRecovery。
+     * 随后数据库将关闭请求及其补偿同步为已释放，推进至 REBUILDING。
      * <p>
-     * RECOVERY_PUBLISHED 位于 Redis 发布后、数据库阶段提交前。若这里失败，数据库仍为 RECONCILING，
-     * 重入会重新清空暂存并按同一计划覆盖，避免重复增加可用额度。订单与请求扫描分别受记录预算限制。
+     * RECOVERY_PUBLISHED 位于 Redis 发布后、数据库阶段提交前；此处失败时数据库保持 RECONCILING，
+     * 再次执行按同一计划覆盖发布。请求和订单扫描分别受记录预算限制。
      *
      * @param c
      *              当前事务独占锁下的控制快照；整个阶段持锁，不按页提交

@@ -9,7 +9,7 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface RepairAuditMapper {
     /**
-     * 保存一条动作、依据、结果及时间；本方法不判断修复是否正确，不修改请求或库存状态。
+     * 插入一条动作、依据、结果和时间，供维护入口追踪修复过程。
      *
      * @param request
      *                     关联请求 ID，可为空

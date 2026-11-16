@@ -1,13 +1,11 @@
 package com.voucherx.common.redis;
 
 /**
- * 集中定义 Redis 键名，只拼接字符串，不读写 Redis。
+ * 生成各业务 Redis 结构的键名。
  * <p>
- * 01 库存链路按 stock、users、request、owners、gate 五个键调用预留脚本。
- * stock 是活动总额度，users 表示谁占了资格，owners 进一步记录资格归属于哪个 requestId；
- * BUCKET 模式也不额外生成每只 MySQL 桶的 Redis 库存键。
- * <p>
- * 当前库存脚本的这五个键没有共同的 Redis Cluster hash tag，不能据此认为已支持集群多键执行。
+ * 预留脚本按 stock、users、request、owners、gate 传入五个键；两种 MySQL 库存模式共用一个活动总库存键。
+ * users 记录已占资格的用户，owners 记录用户对应的 requestId，请求 Hash 保存身份、布局和过程状态。
+ * 库存多键 Lua 使用单节点 Redis 执行。
  *
  * @see com.voucherx.seckill.service.SeckillStockService
  */
@@ -52,7 +50,7 @@ public final class RedisKeys {
     }
 
     /**
-     * 预留脚本 KEYS[2]：已占领取资格的用户 Set；集合成员是 userId，不是剩余库存。
+     * 预留脚本 KEYS[2]，以用户 ID 为成员记录已占领取资格。
      *
      * @param voucherId
      *                      活动 ID
@@ -96,9 +94,9 @@ public final class RedisKeys {
     }
 
     /**
-     * Redis 双桶获取脚本的 KEYS[1]，以及策略更新脚本的 KEYS[1]：保存共享余额 tokens 与结算 Unix 毫秒 ts。
+     * 共享令牌 Hash 键，保存余额 tokens 和结算时刻 ts，供准入获取和策略更新脚本使用。
      * <p>
-     * 02 四个准入键使用同一个 admission hash tag；当前项目仍只支持并验证单节点 Redis，不能据此推断库存已完成集群分片。
+     * 四个准入键具有共同的 admission hash tag；当前运行环境使用单节点 Redis。
      *
      * @return voucherx:{admission}:shared:tokens
      */

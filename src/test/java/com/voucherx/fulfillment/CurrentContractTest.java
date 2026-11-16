@@ -24,7 +24,9 @@ class CurrentContractTest {
         assertThat(TokenExtractor.extract(request)).isEqualTo("token");
     }
 
-    /** 未知或缺失模式不再被解释为单库存。 */
+    /**
+     * 验证库存模式必须明确为 SINGLE 或 BUCKET，缺失及未知值均拒绝。
+     */
     @Test
     void stockModeRequiresAnExplicitSupportedValue() {
         for (String mode : new String[] { null, "", " ", "single", "UNKNOWN" })

@@ -23,10 +23,9 @@ public interface PurchaseOrderMapper {
     VoucherTerms terms(@Param("id") long id);
 
     /**
-     * 在新建购买单事务中固定付款和券规则快照，并设置 PENDING_PAYMENT 及截止时刻。
+     * 在新购买单创建事务中按订单 ID 写付款与权益快照，并设置 PENDING_PAYMENT 和截止时间。
      * <p>
-     * SQL 只按 id 更新，不限定原付款状态；只应由新建单流程调用，不能把它当作付款或取消接口。
-     * 这里仍不发券，发券要等成功支付事件。
+     * 调用前提为该购买单正在创建；发券接续成功支付事件处理。
      *
      * @param id
      *                     本次刚创建的购买订单 ID
@@ -57,9 +56,9 @@ public interface PurchaseOrderMapper {
     PurchaseOrder lock(@Param("id") long id);
 
     /**
-     * 仅将 PENDING_PAYMENT 条件更新为 PAID，不修改基础建单 status。
+     * 将 PENDING_PAYMENT 条件更新为 PAID。
      * <p>
-     * 服务层在同一事务先发券，再执行此更新并要求影响 1 行，最后保存支付事件；任一步失败一起回滚。
+     * 交易服务在同一事务中先发券、检查本次更新数为 1，再保存支付事件，全部共同提交或回滚。
      *
      * @param id
      *               已持锁并允许应用付款的购买订单 ID
@@ -68,7 +67,7 @@ public interface PurchaseOrderMapper {
     int markPaid(@Param("id") long id);
 
     /**
-     * 仅把待付款购买单改为 CANCELLED；不删除订单、不发行用户券，也不修改活动库存或领取资格。
+     * 将待付购买单条件更新为 CANCELLED，保留订单及其活动发行占用。
      *
      * @param id
      *               调用方已持锁的购买订单 ID

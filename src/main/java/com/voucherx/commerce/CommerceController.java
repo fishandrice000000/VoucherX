@@ -11,10 +11,10 @@ import com.voucherx.commerce.model.CommerceOrder;
 import com.voucherx.commerce.model.UserCoupon;
 
 /**
- * 04 的 HTTP 入口：购买付款发券 → 查询用户券 → 消费下单锁券 → 消费付款核销，另有取消和订单查询。
+ * 交易 HTTP 入口，提供购买付款、用户券查询、消费锁券、消费付款核销、取消及订单查询。
  * <p>
- * 用户 ID 来自认证上下文，不从请求体自由指定。服务层核对订单/券归属并计算优惠、应付与有效期限。
- * Payment 和 Receipt 使用接口字段命名；购买单、消费单和用户券查询模型另以 snake_case 序列化。
+ * 用户身份来自认证上下文，服务层核对订单与券归属，并计算优惠、应付和有效期限。
+ * Payment 和 Receipt 使用接口字段命名，订单与用户券查询模型以 snake_case 序列化。
  *
  * @see CommerceService
  * @see com.voucherx.commerce.model.UserCoupon
@@ -45,10 +45,10 @@ public class CommerceController {
     }
 
     /**
-     * 模拟支付事件；必须显式开启配置，默认关闭，不向外部支付机构扣款。
+     * 接收模拟支付事件，显式启用模拟支付配置后可调用。
      * <p>
-     * orderKind 与 orderId 共同定位订单，eventId 是另一个维度的全局支付幂等键，不能拿抢券 requestId 的语义代替。
-     * 相同事件重试必须保持内容一致；success 是输入声明，是否应用权益要看 Receipt.outcome。
+     * orderKind 与 orderId 定位业务订单，eventId 标识全局支付事件；同事件重试应保持类型、订单、金额和结果声明一致。
+     * Receipt.outcome 表示该事件的处理分类和权益应用结果。
      *
      * @param orderKind
      *                      PURCHASE 购买券或 CONSUMPTION 用券消费

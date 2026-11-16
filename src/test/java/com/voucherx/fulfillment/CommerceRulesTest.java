@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * 04 交易纯规则的单元测试，直接传入数字时刻、状态和金额，不启动数据库或支付服务。
+ * 交易纯规则单元测试，通过数字时刻、状态和金额覆盖归属、商户、门槛、有效期、优惠上限及付款分类优先级。
  * <p>
- * 覆盖归属/商户/门槛、有效期边界、优惠上限及付款分类优先级；不验证行锁、SQL 回滚或付款取消的并发交错。
+ * 并发锁与事务回滚验证见 PersistenceContractTest。
  *
  * @see com.voucherx.commerce.CommerceRules
  * @see PersistenceContractTest

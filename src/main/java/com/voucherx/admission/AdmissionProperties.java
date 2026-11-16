@@ -3,10 +3,10 @@ package com.voucherx.admission;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 02 的准入配置，绑定 voucherx.admission；速率单位为令牌/秒，容量单位为令牌数。
+ * 请求准入配置，绑定 voucherx.admission；速率单位为令牌/秒，容量单位为令牌数。
  * <p>
- * 顶层缺失配置时使用构造器默认值；application.yml 也提供同名配置及环境变量入口，默认 mode=OFF。
- * OFF 不执行准入，但启动时仍校验各组参数。ADAPTIVE 只动态发布共享策略，活动限额仍由 Global 提供。
+ * 顶层缺失配置时使用构造器默认值；application.yml 提供同名配置及环境变量入口，默认 mode=OFF。
+ * 启动时校验各组参数。ADAPTIVE 动态发布共享策略，活动限额由 Global 提供。
  *
  * @param mode
  *                       OFF、FIXED 或 ADAPTIVE，缺失时 OFF

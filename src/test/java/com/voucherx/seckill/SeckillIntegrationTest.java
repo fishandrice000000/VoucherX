@@ -45,15 +45,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 /**
- * 01 库存链路的真实组件回归测试，覆盖预留、单库存/桶库存、幂等、布局和事务回滚。
+ * 库存链路真实组件回归，覆盖 Redis 预留、数据库单库存和分桶库存、幂等、布局核验及事务回滚。
  * <p>
- * 一般从
- * bucketLocalSoldOutDoesNotDeductOtherBucket、failureBeforeCommitRollsBackBucketAndInsertedOrder、
- * duplicateMessageDoesNotCreateSecondOrderOrDeductStockAgain
- * 对照源码；所有测试都继承真实隔离组件环境。
+ * 从
+ * bucketLocalSoldOutDoesNotDeductOtherBucket、failureBeforeCommitRollsBackBucketAndInsertedOrder
+ * 和 duplicateMessageDoesNotCreateSecondOrderOrDeductStockAgain 可对照核心实现。
  * <p>
- * preparedMessage 是只测试 MySQL 事务的夹具：准备受理依据并隔离自动投递，不执行 Redis 预扣。
- * 并发用例只验证数量及不超卖，不给出吞吐提高或性能启用验收结论。
+ * preparedMessage 为仅检验 MySQL 事务的夹具，准备账本并隔离自动投递。
+ * 并发用例断言数量及库存约束；吞吐与延迟由独立性能实验评估。
  *
  * @see com.voucherx.order.service.OrderPersistenceService
  * @see com.voucherx.seckill.service.SeckillStockService
@@ -204,7 +203,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 单库存已成功建单后，重发两次同 requestId/messageId 的消息，验证仍只有 1 单、MySQL 库存不再扣、状态缓存仍为 SUCCESS。
+     * 单库存成功建单后重复发送同 requestId/eventId 消息，验证订单数为 1、MySQL 余量保持首次扣减结果且状态缓存为 SUCCESS。
      *
      * @throws Exception
      *                       等待异步重复投递期间被中断等测试异常
@@ -398,7 +397,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 新建 100 份、4 桶的完整未消费布局可初始化 Redis；删掉 Redis 后加入历史订单，初始化器必须拒绝按原总量重建。
+     * 验证 100 份、4 桶的完整未消费布局可以初始化 Redis；已有订单时，缺失库存键须通过受控恢复重建。
      */
     @Test
     void bucketInitializerInitializesFreshLayoutAndRefusesHistory() {

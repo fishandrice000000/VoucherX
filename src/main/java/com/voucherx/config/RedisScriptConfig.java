@@ -9,11 +9,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 把 classpath 中的 Lua 注册为有名称的 Spring Bean，业务服务通过 Qualifier 注入对应脚本。
+ * 将 classpath 中的 Lua 注册为具名 Spring Bean，业务服务通过 Qualifier 注入。
  * <p>
- * 01 从 seckillReserveScript 读到 resources/lua/seckill_reserve.lua，再回到库存服务对照
- * KEYS/ARGV。
- * 加载只读取脚本文本；真正执行发生在 StringRedisTemplate.execute 时，不发生在应用装配阶段。
+ * 从 seckillReserveScript 可继续阅读 seckill_reserve.lua，再回到库存服务对照 KEYS 和 ARGV。
+ * 脚本由 RedisTemplate.execute 调用，Bean 初始化负责加载脚本文本。
  */
 @Configuration
 public class RedisScriptConfig {
@@ -64,7 +63,7 @@ public class RedisScriptConfig {
     }
 
     /**
-     * 注册共享策略更新脚本；按旧速率结算后更新速率、容量及截止，不在每次续期时赠送满桶。
+     * 注册共享策略更新脚本；先按生效中的速率结算令牌，再设置目标速率、容量及截止时刻。
      *
      * @return 期望 Long 结果的策略 Lua Bean
      */
@@ -74,14 +73,14 @@ public class RedisScriptConfig {
     }
 
     /**
-     * 注册 06 的冻结重建发布脚本，对照 RecoveryService.rebuild 阅读 KEYS/ARGV。
+     * 注册活动恢复的原子发布脚本，对照 RecoveryService.rebuild 阅读 KEYS/ARGV。
      * <p>
-     * 七个 KEYS 依次是正式库存、用户资格、归属、gate，以及三组对应暂存键；
-     * 四个 ARGV 是 epoch、recoveryId、可用额度 A、成员数量 R+C。
-     * Lua 检查冻结代次、暂存库存及成员数量后，一次替换库存/资格/归属，并写入发布标记，仍保持冻结。
+     * 七个 KEYS 依次为正式库存、用户资格、归属、gate 及三组对应暂存键；
+     * 四个 ARGV 为 epoch、recoveryId、可用额度 A 和成员数量 R+C。
+     * Lua 校验冻结代次、暂存库存及成员数后，一次替换库存、资格和归属并保存发布标记，门禁保持冻结。
      * <p>
-     * 返回 1 表示发布成功，-1 是门禁不符，-2 是暂存库存不符，-3 是成员数量不符。
-     * 原子范围不包含逐条请求 Hash 或 MySQL 提交；注册 Bean 本身也不会执行脚本。
+     * 返回 1 为成功，-1 为门禁不符，-2 为暂存库存不符，-3 为成员数不符。
+     * 逐条请求 Hash 和 MySQL 事务由恢复服务分别管理。
      *
      * @return 期望 Long 结果的恢复发布 Lua Bean
      * @see com.voucherx.recovery.RecoveryService

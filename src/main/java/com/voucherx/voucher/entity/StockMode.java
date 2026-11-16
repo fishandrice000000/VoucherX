@@ -20,7 +20,7 @@ public enum StockMode {
     BUCKET;
 
     /**
-     * 读取明确的库存模式，不补齐空值，不容忍未知值或大小写变体。
+     * 解析明确的库存模式；接受 SINGLE 或 BUCKET，其他输入抛出参数异常。
      *
      * @param value
      *                  活动或消息中的模式，必须为 SINGLE 或 BUCKET

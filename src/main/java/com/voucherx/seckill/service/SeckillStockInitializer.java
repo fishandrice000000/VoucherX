@@ -20,11 +20,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.Map;
 
 /**
- * 在活动独占锁内，为可证明未消费的活动显式初始化 Redis 门禁及库存。
+ * 在活动控制行独占锁内，为满足安全条件的活动初始化 Redis 门禁和库存。
  * <p>
- * 正常请求和冻结恢复都受同一数据库控制行约束，初始化不能把冻结门禁覆盖为 NORMAL。
- * Redis 与 MySQL 并不原子提交：先写完整 gate，再 SET NX 库存；仅 gate 成功时可以安全重试。
- * 已有库存但门禁缺失或不一致时拒绝自动修复；已有订单或未结请求但库存缺失时应进入受控恢复。
+ * 先核对活动 NORMAL、当前代次及完整布局；完整 gate/stock 已存在时保留现状。
+ * 库存缺失时，活动须没有订单或未结请求，且数据库额度仍为初始总量；随后先写完整 gate，再 SET NX 库存。
+ * <p>
+ * Redis 写入与数据库事务分别生效。仅写完 gate 的中断可在核对后重试；已有库存但门禁缺失、代次不符或活动冻结时拒绝初始化。
  */
 @Component
 @ConditionalOnProperty(name = "voucherx.maintenance-mode", havingValue = "false", matchIfMissing = true)

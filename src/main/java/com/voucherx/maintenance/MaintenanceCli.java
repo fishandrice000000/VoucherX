@@ -6,13 +6,12 @@ import com.voucherx.reconcile.ReconciliationService;
 import org.springframework.boot.SpringApplication;
 
 /**
- * 本机维护入口，给拥有部署配置和凭据的操作环境使用，没有普通用户 HTTP 管理路由。
+ * 本机维护命令入口，使用部署环境的数据库和 Redis 配置执行受控维护操作。
  * <p>
- * 05 提供 diagnose、repair、close、compensate；06 提供 freeze、recover、status。
- * 这不是额外的命令鉴权层，具体权限依赖运行环境及数据库/Redis 凭据。
+ * diagnose、repair、close 和 compensate 用于对账补偿，freeze、recover 和 status 用于活动恢复。
+ * 操作权限由运行环境及连接凭据控制。
  * <p>
- * 启动同一个应用上下文但关闭 Web、自动投递、对账及消费者启动，并启用 maintenance-mode 抑制相关后台初始化/任务。
- * 业务诊断与状态查询只读；修复、关闭、释放和恢复会更改业务数据，不能把所有命令都当成查询。
+ * 启动应用上下文时启用 maintenance-mode，关闭自动投递、消费者及后台扫描，以显式命令推进维护。
  *
  * @see com.voucherx.reconcile.ReconciliationService
  * @see com.voucherx.reconcile.CompensationService

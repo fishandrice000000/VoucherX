@@ -40,10 +40,9 @@ public interface OutboxMapper {
     List<String> dueEvents(@Param("now") long now, @Param("limit") int limit);
 
     /**
-     * 用事件 ID 及到期/过期条件竞争认领；成功时写 CLAIMED、新令牌、租约截止，并把 attempts 加 1。
+     * 按事件到期或租约过期条件竞争认领，成功时写 CLAIMED、新令牌、租约截止并累计 attempts。
      * <p>
-     * 不保证网络发送只执行一次，也不再次关联检查活动/请求，发送器和建单守卫各有后续校验。
-     * 本方法不检查尝试预算；租约接手不等于已经终止原持有者。
+     * 发送器随后核对活动和请求，消费者在建单事务中作最终守卫；认领允许重复发送，由业务身份及订单幂等处理。
      *
      * @param id
      *                       固定事件 ID
@@ -68,10 +67,9 @@ public interface OutboxMapper {
     OutboxClaim findClaim(@Param("id") String id);
 
     /**
-     * 仅在 event_id、claim_token、本状态 CLAIMED 同时匹配时更新发布结果、next_at_ms 并清空令牌。
+     * 按 event_id、claim_token 和 CLAIMED 条件更新发布结果及 next_at_ms，并清空令牌。
      * <p>
-     * 不检查租约截止是否仍在未来；令牌被接手者或消费 defer 等操作清空/更换后，旧发送器无法覆盖新结果。
-     * 写 SENT 只记录发布确认，不将请求改为 SUCCEEDED。
+     * 令牌保持匹配即可回写；接手或 defer 更换令牌后，先前发送者的更新数为 0。SENT 记录本次发布确认。
      *
      * @param id
      *                   固定事件 ID
@@ -83,16 +81,15 @@ public interface OutboxMapper {
      *                   本次发布结果或原因
      * @param next
      *                   下次可处理 Unix 毫秒
-     * @return 实际更新行数；旧令牌等条件不匹配时为 0
+     * @return 实际更新行数；认领令牌或状态条件不匹配时为 0
      */
     int finish(@Param("id") String id, @Param("token") String token, @Param("state") String state,
             @Param("result") String result, @Param("next") long next);
 
     /**
-     * 按请求 ID 将原事件写为 PENDING 或尝试预算已用尽的 QUARANTINED，保存下次时间/原因并清空令牌。
+     * 按请求 ID 将原事件安排为 PENDING，或在尝试预算用尽时记为 QUARANTINED，并保存下次时间、原因及清空令牌。
      * <p>
-     * SQL 不要求旧状态是 SENT，也不自校验用户或 epoch；服务层已持锁核对。
-     * 消费失败可能早于发送器回写 SENT，这里清掉令牌后可阻止其旧 finish 覆盖已安排的重试。
+     * 服务层先持锁核对用户、代次和阶段；清除令牌使发送器的在途回写服从本次重试安排。
      *
      * @param id
      *                        请求 ID，不是事件 ID
@@ -128,10 +125,9 @@ public interface OutboxMapper {
     String stateByRequest(@Param("id") String id);
 
     /**
-     * 仅匹配原 SENT 事件，按现有 attempts 与预算选择 PENDING 或 QUARANTINED，并设置 next_at_ms、清掉令牌。
+     * 匹配 SENT 事件，按累计 attempts 与预算安排 PENDING 或 QUARANTINED，并写 next_at_ms、清空令牌。
      * <p>
-     * 不增加 attempts，不生成新 eventId，也不在这里发 MQ；尝试数要等发送器下一次 claim 才增加。
-     * 即使更新 1 行也可能已进入 QUARANTINED，不能把更新命中标签当作一定重投成功。
+     * 发送器下一次成功认领时再累计 attempts；更新后应结合事件状态判断是否进入待发队列。
      *
      * @param id
      *                        请求 ID，不是事件 ID
@@ -139,15 +135,14 @@ public interface OutboxMapper {
      *                        发送认领尝试预算，来自 DeliveryProperties
      * @param now
      *                        本次可重发 Unix 毫秒
-     * @return 更新行数；旧状态不是 SENT 或事件缺失时为 0
+     * @return 更新行数；当前状态不是 SENT 或事件缺失时为 0
      */
     int scheduleReplay(@Param("id") String id, @Param("maxAttempts") int maxAttempts, @Param("now") long now);
 
     /**
-     * 按请求 ID 将原事件写 DONE、清空认领令牌并记录原因，停止普通发送扫描。
+     * 将原事件记为 DONE、清空认领令牌并保存原因，使其退出普通投递扫描。
      * <p>
-     * 这不会撤回已经在网络或队列中的消息，也不终止持有旧快照的发送线程。
-     * prepare 还必须持锁写 CLOSED，并让消费者 guard 服从同一请求屏障，才能阻止迟到建单。
+     * 关闭服务在同一事务中将请求记为 CLOSED；在途交付抵达消费者后，由账本守卫读取关闭事实并拒绝建单。
      *
      * @param id
      *                   需要结束投递跟踪的请求 ID

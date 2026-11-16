@@ -14,10 +14,10 @@ import com.voucherx.commerce.model.GeneratedId;
 @Mapper
 public interface ConsumptionOrderMapper {
     /**
-     * 插入消费单金额、用户券关联、锁令牌及付款期限，SQL 使用表默认 PENDING_PAYMENT。
+     * 插入消费单的金额、用户券关联、锁令牌及付款期限，初始付款状态为 PENDING_PAYMENT。
      * <p>
-     * 不把草稿 order.id 写入数据库；useGeneratedKeys 将实际自增键回填到 key.id，随后才能把同一个消费单 ID 写到券锁。
-     * 事务还须覆盖后续券行锁、tryLock 和 LOCK 动作，失败时本次插单回滚。
+     * useGeneratedKeys 将数据库自增 ID 回填到 key.id，服务层随后用该 ID 绑定券锁。
+     * 插入与券行锁、tryLock、LOCK 动作处于同一事务，失败共同回滚。
      *
      * @param order
      *                  不可变消费单草稿，含服务层计算的原额/优惠/实付

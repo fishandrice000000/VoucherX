@@ -34,7 +34,7 @@ public class BusinessException extends RuntimeException {
     }
 
     /**
-     * 保留底层原因并暴露已分类的业务语义；02 将 Redis 准入故障用此形式转换为 503。
+     * 保存底层原因及已分类的业务语义，交由统一异常处理器映射 HTTP 响应。
      *
      * @param errorCode
      *                      对外错误类型

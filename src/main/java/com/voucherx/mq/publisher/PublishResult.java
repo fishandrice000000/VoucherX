@@ -1,17 +1,17 @@
 package com.voucherx.mq.publisher;
 
 /**
- * 单次 RabbitMQ 发布的确认结果，不表示消费、建单或付款结果。
+ * 单次 RabbitMQ 发布尝试的确认分类，供 Outbox 安排发送进度。
  * <p>
- * 发布失败分类不能单独授权回补库存；释放还须满足持久化关闭和归属核验。
+ * 请求建单结果由账本事务推进，预留释放由持久化关闭和归属核验后的补偿协议执行。
  */
 public enum PublishResult {
     /**
-     * 本次 Confirm 为 ACK 且未观察到不可路由退回，发送器可尝试记 SENT；不是消费者 ACK 或订单成功。
+     * Broker Confirm 为 ACK 且未观察到不可路由退回，发送器可将原事件记为 SENT。
      */
     CONFIRMED,
     /**
-     * 本次消息被 mandatory 路由检查退回，不能据此撤销已有受理或直接返库存。
+     * mandatory 路由检查退回本次消息，由 Outbox 按投递预算安排重试或隔离。
      */
     RETURNED,
     /**

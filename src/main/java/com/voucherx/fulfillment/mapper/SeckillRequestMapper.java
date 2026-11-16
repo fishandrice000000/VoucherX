@@ -71,11 +71,9 @@ public interface SeckillRequestMapper {
             @Param("now") long now);
 
     /**
-     * 写 ACCEPTED/RESERVED；SQL 的 WHERE 仅匹配请求 ID，阶段判断由 RequestLedger.accept
-     * 在持有请求行锁时完成。
+     * 按请求 ID 写 ACCEPTED/RESERVED。
      * <p>
-     * 不能脱离服务层把此 Mapper 当成自带 INTENT 条件的状态机。
-     * 同事务中还必须插入 Outbox，避免只有受理事实却没有待发事件。
+     * RequestLedger.accept 在请求行锁内核对 INTENT，并在同事务中插入 Outbox，形成完整可靠受理事实。
      *
      * @param id
      *                已持锁且确认仍为 INTENT 的请求 ID
@@ -112,10 +110,9 @@ public interface SeckillRequestMapper {
     int rejectUnreserved(@Param("id") String id, @Param("reason") String reason, @Param("now") long now);
 
     /**
-     * 按请求 ID 写 CLOSED、原因和业务更新时间，保留原 reservation 以便后续释放。
+     * 按请求 ID 写 CLOSED、原因和更新时间，保留 reservation 供后续预留释放。
      * <p>
-     * SQL 不自带旧阶段或无订单条件，调用者须持活动/请求锁检查允许关闭；补偿 prepare 还须同事务保存补偿意图和完成 Outbox。
-     * 只调用本 Mapper 不等于已建立完整补偿协议，更不表示 Redis 已返还。
+     * 服务层在活动和请求锁内核对阶段及订单；补偿准备同时保存补偿意图并完成 Outbox。
      *
      * @param id
      *                   已持锁核验可关闭的请求 ID
@@ -150,10 +147,9 @@ public interface SeckillRequestMapper {
     long countUnsettled(@Param("voucherId") long voucherId);
 
     /**
-     * 扫描 next_check_at_ms 已到且 updated_at_ms 不晚于观察阈值的请求，按检查时间和请求 ID 排序。
+     * 扫描检查时间已到且进展时间达到观察阈值的请求，按 next_check_at_ms 和请求 ID 排序。
      * <p>
-     * 不按 phase 或 reservation 过滤，成功、意图、受理中和关闭都可被检查；陈旧时间不是请求失败事实。
-     * 这条普通查询不持有处理资格，后续先 claimCheck，再由业务事务复核。
+     * 所有阶段均可进入检查；调用者先尝试 claimCheck，再在修复事务中复核当前事实。
      *
      * @param now
      *                        本轮扫描 Unix 毫秒
@@ -167,9 +163,9 @@ public interface SeckillRequestMapper {
             @Param("limit") int limit);
 
     /**
-     * 仅在下次检查时间已到时，将它推迟到 next，协调多个扫描者竞争当前窗口。
+     * 将已到检查时间的请求推迟到 next，协调多个扫描执行者的检查窗口。
      * <p>
-     * 不写处理令牌或业务终态，也没有跨后续操作持有的租约；不能据此认为未来绝不重复扫描，实际修复仍需锁和幂等。
+     * 后续修复以事务行锁和幂等协议保护，可重复选中的请求仍按当前事实处理。
      *
      * @param id
      *                 请求 ID
@@ -182,9 +178,9 @@ public interface SeckillRequestMapper {
     int claimCheck(@Param("id") String id, @Param("next") long next, @Param("now") long now);
 
     /**
-     * 只补记 reservation=RELEASED 及更新时间，不改请求 CLOSED 阶段、不执行 Redis INCR。
+     * 在已关闭请求上补记 reservation=RELEASED 及更新时间。
      * <p>
-     * SQL 按请求 ID 更新，阶段和归属条件由持锁补偿服务保护；须在 Redis 已返回本次/此前释放结果后，与补偿进度和审计同事务保存。
+     * 服务层持锁核对阶段和归属，取得 Redis 的释放成功或已释放结果后，将此标记与补偿进度、审计共同提交。
      *
      * @param id
      *                已确认达到释放结果的请求 ID

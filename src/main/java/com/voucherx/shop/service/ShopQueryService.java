@@ -20,10 +20,10 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 商户查询的缓存支线：先读 Redis，未命中时用短期互斥锁协调回源 MySQL。
+ * 查询商户详情：先读 Redis，未命中时以商户级互斥锁协调 MySQL 回源和回填。
  * <p>
- * 不存在的商户也会短期缓存，正常缓存加随机有效期，分别缓解缓存穿透和集中失效。
- * Redis 故障或等待超时后仍允许回源；该锁用于减少重复查库，不是业务一致性的唯一保障。
+ * 空值缓存缓解同一不存在 ID 的重复查询，随机 TTL 分散集中失效。
+ * 锁竞争超时或 Redis 访问失败时允许数据库回源，以保持查询路径可用。
  */
 @Service
 public class ShopQueryService {

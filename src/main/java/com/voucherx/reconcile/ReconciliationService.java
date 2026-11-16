@@ -14,12 +14,10 @@ import java.time.Clock;
 import java.util.Map;
 
 /**
- * 05 的请求级核对编排：只读 diagnose 收集事实，再由 repair 按建议调用受理、重投或补偿服务。
+ * 请求级对账编排：diagnose 收集事实，repair 按建议接续受理、重投、结果同步或补偿。
  * <p>
- * 诊断涉及多次 MySQL/Redis 普通读，不是冻结活动后的原子快照，也不保证建议执行时事实仍未变化。
- * 需要修改的动作在各自事务中复核；超时、队列空或暂时无订单均不足以直接返还发行预留。
- * <p>
- * ISOLATED/WAIT 等字符串描述本次处理，不自动代表请求进入某个同名终态；修复结果还须结合原记录与审计。
+ * 诊断分别读取 MySQL 和 Redis，各修改入口在自己的事务中重新核对状态、身份及代次。
+ * WAIT 和 ISOLATED 等返回值表示本次处理结论，执行进度由请求、事件、补偿和审计记录共同描述。
  *
  * @see ReconcileDecision
  * @see CompensationService
@@ -115,17 +113,16 @@ public class ReconciliationService {
     }
 
     /**
-     * 先诊断，再普通检查活动仍为 NORMAL 且 epoch 匹配；不满足直接返回 ACTIVITY_ISOLATED，不写下面的动作审计。
+     * 诊断请求并检查活动 NORMAL 和代次匹配，再执行建议动作。
      * <ul>
-     * <li>SYNC_RESULT 尽力写成功缓存，返回 SYNCED；缓存层捕获的数据访问失败不等于缓存必已更新。</li>
-     * <li>ACCEPT_RESERVATION 调用账本 accept；REPLAY_EVENT 进入持锁 replay 事务。</li>
-     * <li>RELEASE_RESERVATION 先 prepare 提交关闭意图，再 execute；正常本调用没有外层事务。</li>
-     * <li>WAIT/ISOLATE 只产生相应结论，ISOLATE 不在这里修改请求 phase 或 Outbox 为隔离状态。</li>
+     * <li>SYNC_RESULT：尽力同步成功快照，返回 SYNCED。</li>
+     * <li>ACCEPT_RESERVATION：提交账本受理；REPLAY_EVENT：通过持锁事务安排同一事件。</li>
+     * <li>RELEASE_RESERVATION：依次提交 prepare 和 execute。</li>
+     * <li>WAIT 或 ISOLATE：返回等待或隔离查证结论。</li>
      * </ul>
      * <p>
-     * 分支结束后记录一条动作审计。repair 本身没有事务注解，顶层审计通常晚于各分支已提交的事务；
-     * 审计失败不能撤销已完成动作。补偿分支内还各有审计，因此一次 repair 可以留下多条记录。
-     * 诊断后的门禁检查不是长期持锁授权，修改入口仍须自行复核。
+     * 门禁不符时返回 ACTIVITY_ISOLATED。分支结束后保存动作审计，补偿事务还会保存阶段审计。
+     * repair 按普通服务调用执行，各分支使用自身事务；顶层审计通常在已提交动作之后单独写入。
      *
      * @param id
      *               请求 ID

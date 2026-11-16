@@ -103,7 +103,7 @@ public class FaultInjector {
     }
 
     /**
-     * 尚未消费的栅栏；精确键优先于通配键，同键再次 arm 会替换旧配置。
+     * 尚未消费的栅栏；精确键优先于通配键，同键再次 arm 会替换同键配置。
      */
     private final ConcurrentHashMap<Key, Barrier> armed = new ConcurrentHashMap<>();
     /**

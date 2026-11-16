@@ -4,13 +4,12 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
 /**
- * 付款买券后实际发给用户的券，映射 tb_user_coupon；与活动/模板是不同对象。
+ * 购买付款成功后发给用户的优惠券实例，映射 tb_user_coupon。
  * <p>
- * 正常使用为 AVAILABLE → LOCKED → USED；取消消费单则释放为 AVAILABLE 或 EXPIRED。
- * JSON 使用 snake_case，Java 使用 record 访问器，例如 faceValue() 对应 JSON 的 face_value。
- *
+ * 使用流程为 AVAILABLE → LOCKED → USED；消费取消时释放为 AVAILABLE 或 EXPIRED。
+ * JSON 使用 snake_case，例如 Java faceValue() 对应 face_value。
  * <p>
- * lockToken 标识某次消费锁的归属，不是数据库行锁或登录令牌。核销后锁字段可保留用于追溯，可否再使用要看 state 和有效期；释放时才清空锁字段。
+ * lockToken 标识一次消费锁归属。核销后可保留归属字段用于追溯，券当前可用性由 state 和有效期决定；释放时清空归属。
  *
  * @param id
  *                            用户券 ID，例如指南中的 4001

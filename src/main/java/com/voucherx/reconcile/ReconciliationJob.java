@@ -9,10 +9,10 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 
 /**
- * 05 的有界扫描入口，自动运行默认关闭；扫描时间只挑选需检查对象，不决定请求已失败。
+ * 有界对账扫描入口，自动调度默认关闭。
  * <p>
- * 先检查到期且进展陈旧的请求，再尝试已到期的 PENDING 补偿。不同执行者可看到同一候选，
- * 具体安全性依靠请求/补偿行锁和 Redis 幂等标记，而不是声称扫描领取永不重复。
+ * 先检查到期且进展达到观察阈值的请求，再执行到期 PENDING 补偿。
+ * 多个执行者可选中相同候选，具体修改通过请求、补偿行锁和 Redis 释放标记保持幂等。
  *
  * @see ReconcileProperties
  * @see ReconciliationService

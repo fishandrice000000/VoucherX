@@ -4,9 +4,9 @@ import com.voucherx.common.api.ErrorCode;
 import com.voucherx.common.exception.BusinessException;
 
 /**
- * 04 的纯交易规则，输入已读到的快照和时间，输出优惠额、释放状态或支付事件处理分类。
+ * 根据交易快照、金额及时间计算优惠、券释放状态和支付事件分类。
  * <p>
- * 不访问存储，不持有行锁。消费初验可以无锁调用，最终写入前由服务层持锁复核；规则通过本身不表示交易已提交。
+ * 规则函数只计算结果，服务层负责读取快照、持锁复核及事务提交。
  *
  * @see CommerceService
  */
@@ -72,16 +72,15 @@ public final class CommerceRules {
     }
 
     /**
-     * 按固定优先级判定一个新支付事件，不读取旧事件记录也不直接修改订单。
+     * 按优先级分类一次支付声明。
      * <ol>
-     * <li>success=false 始终为 FAILED_ATTEMPT，优先于已付、取消及超时检查，调用方保留原订单状态。</li>
-     * <li>成功声明遇到 PAID 为 ALREADY_PAID，不再应用权益。</li>
-     * <li>成功声明遇到非 PENDING_PAYMENT 为 CONFLICT_TERMINAL。</li>
-     * <li>仍待付但 now 已到 deadline 为 CONFLICT_EXPIRED；否则 APPLIED。</li>
+     * <li>success=false 返回 FAILED_ATTEMPT。</li>
+     * <li>成功声明遇到 PAID 返回 ALREADY_PAID。</li>
+     * <li>成功声明遇到其他非待付状态返回 CONFLICT_TERMINAL。</li>
+     * <li>待付单达到截止时刻返回 CONFLICT_EXPIRED，仍在期限内返回 APPLIED。</li>
      * </ol>
      * <p>
-     * 例如待付单截止 200：now=199 可应用，now=200 应关闭；已付款单即使超过原截止仍为 ALREADY_PAID。
-     * 同 eventId 重放由 simulate 提前返回原回执，不会重新运行此规则。
+     * 例如截止 200：now=199 可以应用，now=200 进入到期处理。同 eventId 的重复调用由 simulate 返回其首次处理回执。
      *
      * @param state
      *                     订单当前付款状态

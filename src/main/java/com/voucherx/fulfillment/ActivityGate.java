@@ -6,13 +6,13 @@ import com.voucherx.fulfillment.mapper.ActivityControlMapper;
 import org.springframework.stereotype.Component;
 
 /**
- * 用 MySQL 活动控制行把正常发行与 06 冻结恢复协调起来。
+ * 通过 MySQL 活动控制行协调正常发行、初始化和活动恢复。
  * <p>
- * 正常链路按“活动共享锁 → 请求行 → 库存行”加锁；RecoveryService 通过同一活动行的独占锁与其互斥。
- * 共享锁需在调用者事务中持有，epoch 用于识别恢复前留下的旧请求和旧消息。
- * 意图落库、Redis 预留、持久化受理不是一个跨库事务，各自仍要校验活动状态与代次。
+ * 正常写入按活动共享锁、请求行锁、库存行的顺序执行；初始化和恢复通过活动独占锁与其互斥。
+ * 共享锁由调用者事务保持，epoch 参与活动、请求和消息的身份校验。
+ * 意图提交、Redis 预留、受理提交各有执行边界；各阶段核对当前状态与代次。
  * <p>
- * 冻结保护的是受理、建单、补偿等发行事实，不是所有业务的全局停机开关；支付、核销不因此减少已发行额度。
+ * 控制状态保护受理、建单与预留补偿等发行流程；付款和核销依据各自订单、用户券状态推进。
  *
  * @see com.voucherx.recovery.RecoveryService#freeze(long, String)
  * @see RequestLedger

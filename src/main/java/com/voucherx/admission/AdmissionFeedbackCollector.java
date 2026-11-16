@@ -13,12 +13,12 @@ import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
 
 /**
- * 把消费者本实例的完成计数与外部负载读数组装成反馈，不以 HTTP 202 数量当订单完成 TPS。
+ * 把本实例消费者完成计数与外部负载读数组装成反馈。
  * <p>
- * RabbitAdmin 读取主队列 ready，Hikari MXBean 读取连接活跃数及等待线程数，不查询 MySQL 系统表。
- * 没有可靠采集最老消息年龄；ready 也不覆盖全部 unacked、Outbox 待发、重试或死信积压。
+ * RabbitAdmin 采集主队列 ready，Hikari MXBean 采集连接活跃数及等待线程数。
+ * 完成 TPS 来自 CompletionMetrics；ready 的统计范围是等待交付的主队列消息。
  * <p>
- * 缺失观测用 measured=false 表达；数值占位 0 不能解释为真实负载 0。
+ * 每项观测携带 measured 标志；measured=false 表示采集缺失，此时数值 0 仅为占位。
  *
  * @see CompletionMetrics#snapshotAndReset()
  * @see FeedbackSample

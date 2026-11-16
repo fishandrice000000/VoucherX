@@ -3,10 +3,10 @@ package com.voucherx.voucher.entity;
 import java.time.LocalDateTime;
 
 /**
- * 描述 tb_seckill_voucher_bucket 一行的字段模型，一行就是活动的一只 MySQL 库存桶。
+ * 数据库库存桶的一行字段模型，映射 tb_seckill_voucher_bucket。
  * <p>
- * 主键为 (voucher_id, bucket_no)，layout_version 用于拒绝旧布局请求；同一活动不同桶可以有不同余额。
- * 当前扣减与聚合直接由 SeckillVoucherBucketMapper 的 SQL 执行，不通过此模型自动创建或分配桶。
+ * 主键为活动 ID 与桶号，layout_version 标识该桶所属布局，同活动各桶分别保存余额。
+ * 库存扣减和汇总由 SeckillVoucherBucketMapper 的明确 SQL 执行。
  *
  * @see com.voucherx.voucher.mapper.SeckillVoucherBucketMapper
  * @see com.voucherx.voucher.model.BucketLayoutStats
@@ -18,7 +18,7 @@ public class SeckillVoucherBucket {
      */
     private Long voucherId;
     /**
-     * 桶编号，从 0 开始；是 MySQL 扣减位置，不是独立 Redis 库存键编号。
+     * 数据库库存桶编号，从 0 开始。
      */
     private Integer bucketNo;
     /**

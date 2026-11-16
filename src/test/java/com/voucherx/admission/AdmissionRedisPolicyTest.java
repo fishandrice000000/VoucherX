@@ -135,8 +135,7 @@ class AdmissionRedisPolicyTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 预写 validUntil 已过去的共享策略，验证获取返回 POLICY_STALE，不沿用旧速率；本方法实际传入 FIXED
-     * 配置，因此也覆盖固定模式尊重有限截止的路径。
+     * 预写已过 validUntil 的共享策略，验证 FIXED 模式也返回 POLICY_STALE，遵守策略的有限有效期。
      */
     @Test
     void staleAdaptivePolicyRejectsInsteadOfUsingOldRate() {

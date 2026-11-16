@@ -9,7 +9,7 @@ public enum SeckillRequestStatus {
      */
     PROCESSING,
     /**
-     * 购买订单已创建；尚不能据此认定付款或发券成功。
+     * 购买订单已创建；付款及用户券发行由后续交易流程处理。
      */
     SUCCESS,
     /**

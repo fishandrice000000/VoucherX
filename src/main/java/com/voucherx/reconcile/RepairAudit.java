@@ -5,10 +5,10 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 
 /**
- * 保存修复动作、当时依据和执行标签，供沿请求查证修复过程。
+ * 保存修复动作、观察依据、结果标签及时间，供按请求追踪处理过程。
  * <p>
- * 本组件没有事务注解；在 prepare/execute 内调用时加入其事务，repair 顶层动作结束后调用时通常另行写入。
- * 审计记录不替代请求/补偿/Redis 的当前事实，一次修复也可能产生多条审计，不能按行数统计实际返还次数。
+ * 在 prepare、execute 中调用时加入对应事务；repair 顶层记录通常独立写入。
+ * 一次修复可记录多条审计，实际返还进度以补偿记录及请求预留状态核对。
  *
  * @see com.voucherx.reconcile.mapper.RepairAuditMapper
  * @see CompensationService

@@ -11,7 +11,7 @@ package com.voucherx.voucher.model;
 public class BucketLayoutStats {
 
     /**
-     * 该布局实际查到的桶行数，不是活动配置中的预期桶数。
+     * 数据库查询得到的实际桶行数。
      */
     private Integer bucketCount;
     /**
@@ -48,10 +48,10 @@ public class BucketLayoutStats {
     }
 
     /**
-     * 检查数量等于预期且编号范围恰为 0 到 expectedCount-1。
+     * 以实际行数及编号范围核对 expectedCount 个桶的覆盖。
      * <p>
-     * 结合数据库对同一活动桶号的唯一约束，才能推得编号连续且没有缺口。
-     * 本方法不读取数据库、不核对库存总量或剩余量；调用方还需另做额度核验。
+     * 数量应相等，最小编号为 0，最大编号为 expectedCount-1；活动内桶号唯一约束保证此范围连续。
+     * 调用者另行查询总额度和剩余量，完成库存事实核验。
      *
      * @param expectedCount
      *                          活动配置中已经验证为正数的桶数量

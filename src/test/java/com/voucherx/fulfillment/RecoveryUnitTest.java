@@ -12,10 +12,9 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * 06 的纯单元测试：验证额度计算、故障匹配、到达证据与线程栅栏。
+ * 恢复纯单元测试，验证额度计算、故障匹配、命中证据及线程暂停栅栏。
  * <p>
- * 不连接 MySQL、Redis 或 RabbitMQ；组件级恢复及旧消息隔离见 DeliveryComponentTest。
- * 受控异常和线程暂停证明代码路径及交错，不提供真实杀进程或恢复时长的结论。
+ * 测试通过受控异常和暂停构造执行交错；真实组件恢复及代次隔离见 DeliveryComponentTest。
  */
 class RecoveryUnitTest {
     /**

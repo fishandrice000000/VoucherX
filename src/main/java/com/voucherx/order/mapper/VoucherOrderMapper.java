@@ -47,12 +47,12 @@ public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
             @Param("userId") Long userId);
 
     /**
-     * 统计活动已有订单；只要有历史订单，Redis 库存丢失就不能按初始总量自动重建。
+     * 统计活动已有购买订单数，供安全初始化核对发行占用。
      *
      * @param voucherId
      *                      活动 ID
      *
-     * @return 该活动历史订单数
+     * @return 该活动已有订单数
      */
     @Select("SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = #{voucherId}")
     long countByVoucherId(@Param("voucherId") Long voucherId);

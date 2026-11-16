@@ -9,13 +9,10 @@ import com.voucherx.recovery.RecoveredOrder;
 import com.voucherx.fulfillment.RequestRecord;
 
 /**
- * 06 冻结恢复的持久化操作；SQL 见 resources/mapper/RecoveryMapper.xml。
+ * 活动冻结恢复的持久化操作，SQL 位于 resources/mapper/RecoveryMapper.xml。
  * <p>
- * 维护入口沿 RecoveryService.freeze → recover 阅读：先锁活动控制行，再扫描请求和订单，
- * 归一化新代次、保存额度计划，最后推进恢复阶段。返回更新计数的方法不代表事务已经提交。
- * <p>
- * Mapper 不创建业务事务。恢复写入依赖服务层先取得活动 FOR UPDATE 锁并判断阶段；
- * 部分 UPDATE 仅按主键定位，不能脱离这些前置条件当作通用并发修复入口。
+ * RecoveryService 在活动控制行独占锁内扫描请求和订单、绑定恢复代次、保存额度计划并推进阶段。
+ * Mapper 的写入前置条件由该服务校验，事务由服务管理；返回更新计数表示当前事务内 SQL 的执行结果。
  *
  * @see com.voucherx.recovery.RecoveryService
  */
@@ -64,9 +61,7 @@ public interface RecoveryMapper {
     int ensureControl(@Param("voucher") long voucher);
 
     /**
-     * 把控制行设为 FROZEN，写入新 epoch、恢复 ID 和原因。
-     * <p>
-     * SQL 只按活动 ID 更新；服务层必须先持独占锁并确认旧状态为 NORMAL，重复冻结不能再递增代次。
+     * 将活动控制行设为 FROZEN，保存目标 epoch、恢复 ID 和原因；调用方须持有活动独占锁并确认状态为 NORMAL。
      *
      * @param voucher
      *                    活动 ID
@@ -117,9 +112,7 @@ public interface RecoveryMapper {
             @Param("user") long user);
 
     /**
-     * 把归一化的请求阶段、预留状态、原因绑定到新 epoch，不更换 requestId/eventId。
-     * <p>
-     * SQL 按请求 ID 更新；旧状态和证据校验由持活动独占锁的计划阶段负责。
+     * 将已核验的请求阶段、预留状态和原因绑定到目标 epoch，保留 requestId 和 eventId；调用方须持有活动独占锁。
      *
      * @param request
      *                        原请求 ID
@@ -141,10 +134,9 @@ public interface RecoveryMapper {
             @Param("now") long now);
 
     /**
-     * 为有效受理请求插入或重置原事件的 Outbox，使其重新进入 PENDING。
+     * 为有效受理请求插入或重置同一 eventId 的 Outbox，使其进入 PENDING。
      * <p>
-     * 冲突更新会清零投递次数、清除认领令牌和租约，并设为立即可认领；不生成新的业务事件 ID。
-     * 消息发送时再从新代次账本构造消息，避免复用旧 epoch 的消息内容。
+     * 冲突更新清零投递次数、清除认领令牌和租约并设为立即可投递；发送时由当前账本构造消息。
      *
      * @param event
      *                    请求原有事件 ID
@@ -208,9 +200,7 @@ public interface RecoveryMapper {
     int savePlan(@Param("id") String id, @Param("plan") RecoveryPlan plan, @Param("now") long now);
 
     /**
-     * 统计活动全部已建订单，即恢复计划中的 C。
-     * <p>
-     * 已付款、未付款、取消、核销及过期均不在此扣除；发行历史不能因后续交易状态改变而重新放量。
+     * 统计活动全部购买订单，即恢复计划中的 C；订单后续支付、取消及用券状态均保持该发行占用。
      *
      * @param voucher
      *                    活动 ID
@@ -263,9 +253,9 @@ public interface RecoveryMapper {
     int releaseClosedRequests(@Param("voucher") long voucher, @Param("now") long now);
 
     /**
-     * 将已关闭且预留已释放请求的补偿任务同步为 RELEASED，避免旧补偿再返还额度。
+     * 将已关闭且预留已释放请求的补偿任务同步为 RELEASED。
      * <p>
-     * 依赖 releaseClosedRequests 及 Redis 重建先完成；SQL 不筛选旧补偿状态，符合请求条件的任务都会更新。
+     * 调用前已完成 Redis 重建及 releaseClosedRequests；更新范围为符合请求条件的所有补偿任务。
      *
      * @param voucher
      *                    活动 ID
@@ -284,21 +274,19 @@ public interface RecoveryMapper {
      * @param voucher
      *                    活动 ID
      * @param epoch
-     *                    本轮恢复代次
+     *                    当前恢复代次
      *
      * @return 未满足恢复投递条件的受理请求数，复流要求为零
      */
     long countUnmatchedEvents(@Param("voucher") long voucher, @Param("epoch") long epoch);
 
     /**
-     * 按活动 ID 和 epoch 将控制状态改回 NORMAL 并清空冻结原因，保留 recoveryId。
-     * <p>
-     * SQL 没有旧阶段条件；服务层持独占锁且完成 REBUILDING 校验后才允许调用。
+     * 按活动 ID 和 epoch 恢复 NORMAL 并清空冻结原因，保留 recoveryId；服务须持独占锁并完成 REBUILDING 校验。
      *
      * @param voucher
      *                    活动 ID
      * @param epoch
-     *                    本轮恢复代次，防止修改其他代次
+     *                    当前恢复代次，防止修改其他代次
      *
      * @return 更新计数
      */
@@ -329,14 +317,12 @@ public interface RecoveryMapper {
     RecoveryPlan savedPlan(@Param("id") String id);
 
     /**
-     * 按活动 ID 和 epoch 推进活动恢复阶段，不修改代次和 Redis 门禁。
-     * <p>
-     * 服务层持独占锁并检查旧阶段，再与恢复任务状态在同一事务内推进。
+     * 按活动 ID 和 epoch 推进恢复阶段；服务持独占锁核验当前阶段，并在同一事务内更新恢复任务状态。
      *
      * @param voucher
      *                    活动 ID
      * @param epoch
-     *                    本轮恢复代次
+     *                    当前恢复代次
      * @param state
      *                    目标活动状态
      *

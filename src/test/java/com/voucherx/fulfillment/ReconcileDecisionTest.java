@@ -5,9 +5,10 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 
 /**
- * 05 的纯分类单元测试，直接构造请求及事实布尔值，不启动 MySQL、Redis、消息或维护命令。
+ * 对账分类的纯单元测试，以请求模型和事实布尔值覆盖决策分支。
  * <p>
- * 验证“超时不能直接判失败”的分类前提，不证明数据库关闭或 Lua 释放已经执行。
+ * 超时仅决定进入扫描候选集；分类还需结合订单、预留归属及 Outbox 事实。
+ * 数据库关闭与 Lua 释放的执行见 DeliveryComponentTest。
  *
  * @see com.voucherx.reconcile.ReconcileDecision
  * @see DeliveryComponentTest#durableClosureAndRepeatedCompensationReturnStockOnce()

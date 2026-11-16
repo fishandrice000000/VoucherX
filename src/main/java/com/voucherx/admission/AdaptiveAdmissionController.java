@@ -78,11 +78,10 @@ public class AdaptiveAdmissionController {
     }
 
     /**
-     * 以应用当前 Unix 毫秒加 controller.policyTtlMillis 得到 validUntil，容量取配置共享上限与 max(1,
-     * rate) 的较小者。
+     * 发布内存中的当前速率，使用当前 Unix 毫秒加 controller.policyTtlMillis 作为 validUntil。
+     * 容量为配置共享上限与 max(1, rate) 的较小值。
      * <p>
-     * 将当前内存速率交给策略存储层；返回失败记错误日志，不伪造成功，也不永久放宽旧策略有效期。
-     * 控制器使用的是 controller 的 TTL，不是 global.policyTtlMillis。
+     * 策略存储返回失败时记录错误日志，由后续调度再次发布；已有策略按其截止时刻失效。
      *
      * @param reason
      *                   本次发布的诊断原因，例如 INITIAL、OVERLOAD 或 HOLD

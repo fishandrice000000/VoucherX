@@ -7,10 +7,10 @@ import com.voucherx.commerce.model.UserCoupon;
 import com.voucherx.commerce.model.PurchaseOrder;
 
 /**
- * 用户券的发行、锁定、核销和释放 SQL，映射 tb_user_coupon；事务和用户/锁归属由服务层负责。
+ * 访问用户券的发行、锁定、核销和释放数据，映射 tb_user_coupon。
  * <p>
- * tryLock 使用状态及 version 条件，use 只检查 LOCKED，release 只按 ID 写入。
- * 因此必须连同 CommerceService 持有订单锁、券锁及 requireLock 的整段流程阅读，不能只看单条 SQL 推断并发保护。
+ * tryLock 具有状态与 version 条件，use 具有 LOCKED 条件，release 按券 ID 更新。
+ * 交易服务负责订单锁、券锁、用户归属和令牌校验，事务覆盖完整检查及写入过程。
  *
  * @see com.voucherx.commerce.CommerceService
  * @see com.voucherx.commerce.model.UserCoupon
@@ -84,10 +84,9 @@ public interface UserCouponMapper {
     int issue(@Param("order") PurchaseOrder order, @Param("now") long now, @Param("until") long until);
 
     /**
-     * 仅将 LOCKED 券改为 USED 并增加版本，不清除 lock_order_id/lock_token 的历史归属。
+     * 将 LOCKED 券更新为 USED 并增加 version，保留消费归属字段用于追溯。
      * <p>
-     * SQL 不再次比较用户、订单或令牌；服务层已持订单和券锁执行 requireLock 和有效期检查，直到更新完成仍持锁。
-     * 调用本方法本身不修改消费单或写支付事件，必须使用上层核销事务。
+     * 服务层已持订单与券行锁核对归属和有效期；该更新与消费单 PAID、USE 动作及支付事件共同提交。
      *
      * @param id
      *               已核验本次锁归属的用户券 ID
@@ -96,10 +95,9 @@ public interface UserCouponMapper {
     int use(@Param("id") long id);
 
     /**
-     * 按券 ID 写入服务层算好的 AVAILABLE 或 EXPIRED，清空锁单 ID/令牌并增加版本。
+     * 按券 ID 写 AVAILABLE 或 EXPIRED，清空锁订单 ID 和令牌，并增加 version。
      * <p>
-     * SQL 没有旧状态、令牌或版本条件；必须由已持订单/券锁并通过 requireLock 的关闭流程调用。
-     * 释放的是消费使用锁，不返还秒杀发行库存，也不实现已付款退款。
+     * 关闭流程先持订单与券行锁并通过 requireLock；释放结果由券的有效期确定。此操作释放消费使用权。
      *
      * @param id
      *                  已核验当前消费单归属的用户券 ID

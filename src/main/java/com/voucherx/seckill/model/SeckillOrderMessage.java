@@ -1,11 +1,11 @@
 package com.voucherx.seckill.model;
 
 /**
- * 从持久化请求生成的异步建单负载；主线由 RequestRecord.message 构造。
+ * 由持久化请求构造的异步建单消息，主线入口为 RequestRecord.message。
  * <p>
- * messageId 就是固定的 Outbox eventId，重发不变；requestId 是业务请求幂等键。
- * stockMode/startBucketNo/layoutVersion 是计划布局，epoch 防止恢复前的旧消息继续生效。
- * 所有消息必须显式携带布局和代次，账本守卫继续核对完整身份。
+ * messageId 对应固定 Outbox eventId，requestId
+ * 标识业务请求；stockMode、startBucketNo、layoutVersion 保存计划布局。
+ * epoch 标识活动恢复代次，消费者在建单事务中将消息完整身份与账本、活动配置核对。
  *
  * @param messageId
  *                          固定事件 ID，不是每次发布的 CorrelationData ID

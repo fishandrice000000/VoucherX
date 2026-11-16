@@ -1,10 +1,9 @@
 package com.voucherx.order.service;
 
 /**
- * 携带明确业务拒绝原因的建单异常，抛出后由事务代理回滚本次 MySQL 写入。
+ * 携带明确业务拒绝原因的建单异常，由事务代理回滚建单写入。
  * <p>
- * 消费者按 failure 分类核验并关闭请求；暂时性数据库或消息异常走另一条重试路径。
- * 业务拒绝本身不会自动返还 Redis 预留，关闭与释放需按补偿协议处理。
+ * 消费者随后核对消息与账本身份、记录请求关闭及结果；符合补偿条件的预留由关闭和释放协议处理。
  *
  * @see OrderFailure
  * @see com.voucherx.order.service.OrderPersistenceService

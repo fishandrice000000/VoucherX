@@ -47,9 +47,9 @@ public interface SeckillVoucherBucketMapper {
             @Param("layoutVersion") Integer layoutVersion);
 
     /**
-     * 只统计指定活动及布局版本的行数、最小和最大桶号，不读取各桶余额。
+     * 统计指定活动和版本的桶行数、最小及最大桶号。
      * <p>
-     * 把结果交给 covers；结合表主键的桶号唯一约束，可排除“4 行但编号为 0/1/2/99”这类假完整布局。
+     * 将结果交给 covers，结合活动内桶号唯一约束核对完整编号覆盖。
      *
      * @param voucherId
      *                          活动 ID
@@ -69,7 +69,7 @@ public interface SeckillVoucherBucketMapper {
             @Param("layoutVersion") Integer layoutVersion);
 
     /**
-     * 统计指定活动布局的桶行数；仅数量不能单独证明编号连续。
+     * 统计指定活动及布局版本的桶行数，供布局核对使用。
      *
      * @param voucherId
      *                          活动 ID

@@ -38,26 +38,16 @@ public class SeckillStockService {
     }
 
     /**
-     * 把 Redis 操作位置放入 KEYS，把请求身份和业务条件按顺序放入 ARGV，执行一次预留脚本。
+     * 将活动库存键、请求身份和布局参数交给一次 Redis 预留脚本。
      * <p>
-     * 五个键的顺序不能交换：
-     * <ol>
-     * <li>stock：活动总库存字符串，两种 MySQL 库存模式都共用它。</li>
-     * <li>users：已占资格的用户 Set。</li>
-     * <li>request：本次请求 Hash，写入身份、PENDING、布局和代次。</li>
-     * <li>owners：userId 到 requestId 的归属 Hash。</li>
-     * <li>gate：活动门禁 state/epoch。</li>
-     * </ol>
+     * KEYS 依次为 stock、users、request、owners、gate；ARGV 依次为
+     * userId、requestId、nowMillis、beginMillis、endMillis、voucherId、stockMode、startBucketNo、layoutVersion、epoch。
      * <p>
-     * ARGV[1..10] 依次是 userId、requestId、nowMillis、beginMillis、endMillis、voucherId、
-     * stockMode、startBucketNo、layoutVersion、epoch。Java 转字符串传输，Lua 按需 tonumber。
+     * Lua 校验完整门禁与参数，识别同请求重放，再检查库存、活动时间和用户资格；通过后原子扣减库存、记录资格、归属和请求状态，并 PERSIST 活跃请求。
+     * 同一请求的重复预留返回当前余量。消息起始桶随请求记录，实际 MySQL 扣减桶由订单事务确定。
      * <p>
-     * 脚本先检查门禁，再识别同请求重放，再检查库存键、时间、资格及库存。
-     * 通过后原子 DECR、SADD、写归属和请求状态，并 PERSIST 活跃请求；不会替 MySQL 提交事务。
-     * 同一请求已拥有预留时只返回当前余量，不再扣减；Redis 不在这里选择实际 MySQL 扣减桶。
-     * <p>
-     * 非负结果为成功，0 代表余量恰好为零；负数为 -1 库存不可用、-2 未开始、-3 已结束、
-     * -4 重复用户、-5 售罄、-6 门禁或代次不符。连接异常或空返回抛业务异常，调用者须按结果可能未知处理。
+     * 非负值表示预留成功，0 表示余量恰好为零；-1 表示库存不可用、-2 未开始、-3 已结束、-4 重复用户、-5 售罄、-6 门禁或身份布局参数不符。
+     * 连接异常或空返回抛业务异常，由调用者保留结果未知的意图并安排查证。
      *
      * @param voucherId
      *                          活动 ID
@@ -112,20 +102,14 @@ public class SeckillStockService {
     }
 
     /**
-     * 05 的 Redis 释放适配层；调用前必须已提交 MySQL 关闭屏障，且当前持有活动/请求/补偿保护锁。
+     * 执行原请求的 Redis 预留释放；调用前须已提交数据库关闭屏障，并持有活动、请求及补偿保护锁。
      * <p>
-     * KEYS 顺序为 stock、users、request、owners、gate；ARGV 为
-     * userId、reason、requestId、epoch，没有 compensationId。
-     * 脚本要求完整且匹配的门禁、库存/请求键存在，以及请求 Hash 的 requestId、userId、epoch。
+     * KEYS 为 stock、users、request、owners、gate；ARGV 为 userId、reason、requestId、epoch。
+     * 脚本检查当前门禁、请求身份和预留归属；RELEASED 返回 2，SUCCESS 拒绝释放。
+     * 待释放请求的归属及库存均有效时，原子移除资格和归属、增加一份库存，并写 RELEASED。
      * <p>
-     * 随后原请求 status=RELEASED 直接返回 2，不再次删 owners 或 INCR；status=SUCCESS 拒绝。
-     * 尚未释放时才要求 owners[userId] 仍指向原请求且库存数值合法，再原子移除归属/资格、加回 1、写 RELEASED 并 PERSIST
-     * 请求证据。
-     * 例如旧 R1 已释放而用户新 R2 已占资格，R1 的重复释放不会清掉 R2 的新归属。
-     * <p>
-     * 返回 1（本次释放）与 2（之前已释放）都映射 true；负码、空返回或捕获的 Redis 数据访问异常为 false。
-     * false 不证明“没发生过释放”，也不许可盲目补加；调用方保留持久进度再试或隔离。
-     * 本方法不关闭数据库请求，也不改变 MySQL 活动库存。
+     * 返回 1 或 2 均表示已达到释放结果，映射 true；负码、空返回或数据访问异常映射 false，补偿服务保留进度后继续查证或重试。
+     * 例如 R1 释放后用户又持有 R2，重复执行 R1 通过自身 RELEASED 标记返回，R2 的资格与归属保持有效。
      *
      * @param voucherId
      *                      原活动 ID
@@ -158,9 +142,9 @@ public class SeckillStockService {
     }
 
     /**
-     * 通过 SET NX 仅初始化缺失的 Redis 总库存，不覆盖已有值。
+     * 使用 SET NX 创建缺失的 Redis 总库存键，已有键保持现值。
      * <p>
-     * 本方法不检查数据库历史，调用者须先由安全初始化器确认不会重置已有占用。
+     * 调用者先通过安全初始化流程核对数据库占用与活动门禁，再提交本次初始化额度。
      *
      * @param voucherId
      *                      活动 ID
@@ -195,7 +179,7 @@ public class SeckillStockService {
     }
 
     /**
-     * 读取 Redis 剩余库存以便观察；该值不能代替 MySQL 订单或付款事实。
+     * 读取 Redis 当前可用额度，供状态观察和测试断言使用。
      *
      * @param voucherId
      *                      活动 ID

@@ -12,10 +12,10 @@ import static org.assertj.core.api.Assertions.*;
 import static org.awaitility.Awaitility.await;
 
 /**
- * 共享真实组件回归：03 从受理与投递开始，04 继续付款用券，05/06 覆盖关闭补偿和受控恢复。
+ * 真实组件回归，串联受理投递、购买付款、用券消费、关闭补偿及活动恢复。
  * <p>
- * 真实 MySQL、Redis、RabbitMQ 来自隔离容器；关闭自动 Outbox 投递，正常消息流程由用例显式 dispatch 接续。
- * 03 先读 realComponentsDeliverAcceptedRequestAndReplayIdempotently；买券到核销再读
+ * MySQL、Redis 和 RabbitMQ 来自隔离容器；用例关闭自动 Outbox 投递并显式 dispatch 推进消息。
+ * 先读 realComponentsDeliverAcceptedRequestAndReplayIdempotently，再读
  * realPurchaseIssueCancelRelockAndRedeem。
  *
  * @see #realComponentsDeliverAcceptedRequestAndReplayIdempotently()
@@ -77,14 +77,13 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 04 的顺序真实组件链路：先通过 Outbox/MQ 建购买单，再付款发券、消费锁券、取消释放、重锁与付款核销。
+     * 顺序执行真实组件链路：Outbox/MQ 建购买单、付款发券、消费锁券、取消释放、重新锁券及付款核销。
      * <p>
-     * 用户/活动均为 1，买券支付 100 分、券面额 1000 分、消费原额 2000 分、应付 1000 分，与指南金额不同但调用关系一致。
-     * 相同 pay-buy 事件重放仍返回原 APPLIED 且只发一张券；取消旧消费单后，新单用新令牌锁券，旧单迟到成功只能得
-     * CONFLICT_TERMINAL。
+     * 用户与活动均为 1，购买支付 100 分、券面额 1000 分、消费原额 2000 分、应付 1000 分。
+     * 相同 pay-buy 事件返回首次 APPLIED 回执且只发一券；取消后的消费单收到迟到成功通知时返回 CONFLICT_TERMINAL。
      * <p>
-     * 新消费单付款 APPLIED，换新事件再成功得 ALREADY_PAID，最终券 USED 且只有一条 USE；已付单取消被拒绝。
-     * 这些动作按顺序构造，不是穷尽付款/取消所有线程交错；并发锁券与回滚另看 PersistenceContractTest。
+     * 新消费单付款返回 APPLIED，新的成功事件返回 ALREADY_PAID，最终券为 USED 且只有一条 USE。
+     * 此用例覆盖上述顺序操作，锁券并发与事务回滚见 PersistenceContractTest。
      *
      * @see PersistenceContractTest
      */
@@ -121,12 +120,10 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 05 的真实组件支线：从用户/活动 1、库存 10 的受理未投递请求开始，与 04 已付款用券场景分开。
+     * 真实组件补偿链路，从用户 1、活动 1、库存 10 的受理未投递请求开始。
      * <p>
-     * prepare 先建立关闭意图，再 execute 两次；最终 Redis 库存只恢复到 10，旧请求直接建单被拒绝、订单为 0，重新诊断为 WAIT。
-     * 验证重复执行不再次返还，以及消费者守卫服从原请求关闭屏障。
-     * <p>
-     * 本用例没有在 Redis 释放后、数据库补记前强杀进程，也没有穷尽网络故障交错；那些恢复分支的机制需结合源码分析。
+     * prepare 提交请求关闭，再执行两次 execute；Redis 库存最终为 10，关闭请求的建单被拒绝，订单数为 0，
+     * 重新诊断为 WAIT。该用例验证补偿重复执行的幂等性及请求终态屏障。
      *
      * @see com.voucherx.reconcile.CompensationService#prepare
      * @see com.voucherx.reconcile.CompensationService#execute
@@ -151,13 +148,11 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 验证受理事实已落 MySQL 后，即使 Redis 库存、资格、归属和请求 Hash 丢失，恢复仍保留在途占用。
+     * 验证持久化受理后 Redis 库存、资格、归属和请求 Hash 丢失时，活动恢复保留在途占用。
      * <p>
-     * 示例为总额 10、已建单 C=0、已受理 R=1，所以恢复后 A=9；gate 未被删除。
-     * 冻结提升 epoch，旧消息建单被拒绝且不能把已重绑的新代次请求改成失败。
-     * 再由恢复为 PENDING 的原 Outbox 重新投递，最终请求 SUCCEEDED，MySQL 库存为 9。
-     * <p>
-     * 这是隔离容器中的实际 MySQL/Redis/RabbitMQ 链路验证；该用例没有模拟进程崩溃。
+     * 总额 10、C=0、R=1，恢复后 A=9，gate 保持存在。冻结提升 epoch，先前代次消息的建单和失败回写均被拒绝。
+     * 当前代次账本由同一事件的 PENDING Outbox 再次投递，最终请求 SUCCEEDED，MySQL 库存为 9。
+     * 用例运行于隔离 MySQL、Redis 和 RabbitMQ 容器。
      */
     @Test
     void rebuildPreservesAcceptedRequestAndRejectsOldEpoch() {

@@ -24,12 +24,10 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 登录业务：Redis 保存验证码和 Token，MySQL 保存用户。
+ * 手机号验证码登录服务，Redis 保存验证码和会话，MySQL 保存用户。
  * <p>
- * 阅读顺序为 {@link #sendCode}、{@link #login}，再跳到
- * {@link com.voucherx.auth.interceptor.AuthInterceptor#preHandle} 看 Token 如何还原成
- * userId。
- * 验证码消费、用户建档与 Token 写入跨越 Redis 和 MySQL，不属于同一个原子事务。
+ * 沿 sendCode、login 阅读发码与登录，再进入 AuthInterceptor.preHandle 查看 Token 如何还原用户身份。
+ * 验证码原子消费、用户建档和登录态写入按顺序分别执行。
  */
 @Service
 public class AuthService {

@@ -187,10 +187,10 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     }
 
     /**
-     * 先用 old 令牌认领事件，租约未到时 new 更新 0 行；用模拟传入的到期时刻后，new 接手成功。
+     * 验证 Outbox 租约及认领令牌的条件更新。
      * <p>
-     * old 再写 SENT 应更新 0 行，new 则更新 1 行；真实验证 SQL 的令牌条件，不需要等待真实租约时长。
-     * 本用例不向 RabbitMQ 发送消息，因此证明的是旧认领者不能覆盖新结果，而不是网络层绝不会重复发送。
+     * 使用 old 令牌认领后，租约内 new 更新 0 行；传入到期时刻后 new 接手成功。
+     * 随后 old 写 SENT 更新 0 行，new 写 SENT 更新 1 行。该用例以真实 SQL 验证认领所有权。
      */
     @Test
     void expiredOutboxLeaseCannotBeCompletedByPreviousClaimant() {

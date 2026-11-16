@@ -1,11 +1,10 @@
 package com.voucherx.recovery;
 
 /**
- * 可被测试精确命中的业务执行位置；名称只标识位置，不代表提交已经完成。
+ * 供故障注入匹配的业务执行位置。
  * <p>
- * 06 从 RECOVERY_FROZEN、RECOVERY_PLANNED、RECOVERY_PUBLISHED 读到
- * RECOVERY_BEFORE_RESUME，
- * 对照 RecoveryService 中故障点与事务、Redis 写入的相对位置，判断重入会从哪个阶段继续。
+ * 恢复路径依次经过 RECOVERY_FROZEN、RECOVERY_PLANNED、RECOVERY_PUBLISHED 和
+ * RECOVERY_BEFORE_RESUME。各位置的事务提交状态取决于其在 RecoveryService 中的调用位置。
  *
  * @see FaultInjector
  * @see RecoveryService

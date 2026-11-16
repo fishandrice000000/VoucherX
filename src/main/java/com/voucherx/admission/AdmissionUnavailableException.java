@@ -1,7 +1,7 @@
 package com.voucherx.admission;
 
 /**
- * 封装 Redis 准入数据访问失败，供编排层转为 503；它不是令牌不足的 429，不能捕获后静默放行。
+ * 封装 Redis 准入数据访问失败，由编排层转换为 HTTP 503，表示本次准入依赖不可用。
  */
 public class AdmissionUnavailableException extends RuntimeException {
 

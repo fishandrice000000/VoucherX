@@ -5,10 +5,10 @@ import org.apache.ibatis.annotations.Param;
 import com.voucherx.commerce.model.PaymentEvent;
 
 /**
- * 模拟支付事件表访问，event_id 是全表主键，而非单订单内局部唯一键。
+ * 访问模拟支付事件及其首次处理回执，event_id 为全表主键。
  * <p>
- * 一条记录保存输入声明和处理后的历史回执；同事件重放要比较类型、订单、用户、金额和 success。
- * 订单行锁仅协调同一订单，跨订单事件 ID 冲突另由主键兜底；事务和冲突处理由服务层负责。
+ * 重放时核对类型、订单、用户、金额和 success；订单行锁协调同单操作，事件主键协调跨订单碰撞。
+ * 事务和冲突处理由交易服务管理。
  *
  * @see com.voucherx.commerce.CommerceService#simulate
  * @see PaymentEvent
@@ -29,7 +29,7 @@ public interface PaymentEventMapper {
      *
      * @param event
      *                  服务层已经判定完处理结果的事件
-     * @return 插入行数；事件主键冲突抛异常，不能覆盖旧记录
+     * @return 插入行数；事件主键冲突抛异常，不能覆盖既有事件记录
      */
     int insert(@Param("event") PaymentEvent event);
 }

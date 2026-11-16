@@ -8,10 +8,10 @@ import com.voucherx.fulfillment.RequestLedger;
 import com.voucherx.fulfillment.StaleDeliveryException;
 import com.voucherx.mq.config.RabbitMqConfig;
 import com.voucherx.order.service.OrderBusinessException;
-import com.voucherx.order.service.OrderPersistResult;
-import com.voucherx.order.service.OrderPersistenceService;
+import com.voucherx.order.service.PurchaseOrderCreationResult;
+import com.voucherx.order.service.PurchaseOrderCreationService;
 import com.voucherx.seckill.model.SeckillOrderMessage;
-import com.voucherx.seckill.service.SeckillRequestStatusStore;
+import com.voucherx.seckill.service.SeckillRequestStatusCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
@@ -30,7 +30,7 @@ import java.util.List;
  * 暂时性失败由账本安排 Outbox 重试，当前交付进入死信；业务失败通过请求关闭记录终态，
  * 失效交付按守卫结果直接确认。
  *
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  * @see com.voucherx.fulfillment.RequestLedger
  * @see com.voucherx.fulfillment.DeliveryListenerConfig
  */
@@ -39,14 +39,14 @@ public class SeckillOrderConsumer {
     private static final Logger log = LoggerFactory.getLogger(SeckillOrderConsumer.class);
     private final com.voucherx.recovery.FaultInjector faults;
     private final ObjectMapper mapper;
-    private final OrderPersistenceService orders;
+    private final PurchaseOrderCreationService orders;
     private final RequestLedger ledger;
-    private final SeckillRequestStatusStore statuses;
+    private final SeckillRequestStatusCache statuses;
     private final CompletionMetrics metrics;
     private final DeliveryProperties config;
 
-    public SeckillOrderConsumer(ObjectMapper mapper, OrderPersistenceService orders, RequestLedger ledger,
-            SeckillRequestStatusStore statuses, CompletionMetrics metrics, DeliveryProperties config,
+    public SeckillOrderConsumer(ObjectMapper mapper, PurchaseOrderCreationService orders, RequestLedger ledger,
+            SeckillRequestStatusCache statuses, CompletionMetrics metrics, DeliveryProperties config,
             com.voucherx.recovery.FaultInjector faults) {
         this.faults = faults;
         this.mapper = mapper;
@@ -126,8 +126,8 @@ public class SeckillOrderConsumer {
     /**
      * 按配置选择单条处理或有界批事务处理。
      * <p>
-     * 开启批处理且有多条消息时调用 persistBatch，代理成功返回后逐项记录结果并确认交付。
-     * 批事务失败时先整体回滚，再逐项调用 one 隔离各自结果。
+     * 开启批处理且有多条消息时调用 createPurchaseOrdersInBatch，代理成功返回后逐项记录结果并确认交付。
+     * 批事务失败时先整体回滚，再逐项调用 processSingleDelivery 隔离各自结果。
      * <p>
      * 提交后的故障或 ACK 异常保留数据库结果，重复交付通过已有订单复用。
      * 批事务的在途数按一次调用统计，各结果使用同一批次开始时刻记录耗时。
@@ -138,14 +138,14 @@ public class SeckillOrderConsumer {
      *                    原交付通道
      * @throws IOException
      *                         逐项确认交付失败
-     * @see com.voucherx.order.service.OrderPersistenceService#persistBatch
+     * @see com.voucherx.order.service.PurchaseOrderCreationService#createPurchaseOrdersInBatch
      */
     private void process(List<Item> batch, Channel channel) throws IOException {
         if (config.batchEnabled() && batch.size() > 1) {
-            List<OrderPersistResult> results;
+            List<PurchaseOrderCreationResult> results;
             long started = metrics.begin();
             try {
-                results = orders.persistBatch(batch.stream().map(Item::message).toList());
+                results = orders.createPurchaseOrdersInBatch(batch.stream().map(Item::message).toList());
             } catch (Exception ex) {
                 metrics.recordFailure(started);
                 results = null;
@@ -160,14 +160,14 @@ public class SeckillOrderConsumer {
                         metrics.recordCreated(started);
                     else
                         metrics.recordDuplicate(started);
-                    success(batch.get(i), results.get(i), channel);
+                    cacheResultAndAcknowledge(batch.get(i), results.get(i), channel);
                 }
                 return;
             }
             // 代理已回滚整个批次，尚无 ACK；有界降级到逐条，以隔离毒消息。
         }
         for (Item item : batch)
-            one(item, channel);
+            processSingleDelivery(item, channel);
     }
 
     /**
@@ -175,11 +175,13 @@ public class SeckillOrderConsumer {
      * <ul>
      * <li>正常返回：记录创建或重复结果，同步成功快照并 ACK。</li>
      * <li>StaleDeliveryException：确认当前受执行条件限制的交付。</li>
-     * <li>OrderBusinessException：事务回滚后调用 ledger.fail，核验通过则写失败快照并 ACK，否则 NACK。</li>
-     * <li>其他异常：事务回滚后调用 ledger.defer 安排原事件，再 NACK 原交付。</li>
+     * <li>OrderBusinessException：事务回滚后调用 ledger.recordBusinessRejection，核验通过则写失败快照并
+     * ACK，否则 NACK。</li>
+     * <li>其他异常：事务回滚后调用 ledger.scheduleEventRetry 安排原事件，再 NACK 原交付。</li>
      * </ul>
      * <p>
-     * fail、defer 成功返回后才继续其后的确认语句；这些调用抛异常时由监听容器处理当前执行失败。
+     * recordBusinessRejection、scheduleEventRetry
+     * 成功返回后才继续其后的确认语句；这些调用抛异常时由监听容器处理当前执行失败。
      * 订单提交后的故障点和确认异常保留已提交结果，后续重复交付使用幂等查询。
      *
      * @param item
@@ -188,21 +190,21 @@ public class SeckillOrderConsumer {
      *                    原交付通道
      * @throws IOException
      *                         发送确认失败
-     * @see com.voucherx.fulfillment.RequestLedger#fail
-     * @see com.voucherx.fulfillment.RequestLedger#defer
+     * @see com.voucherx.fulfillment.RequestLedger#recordBusinessRejection
+     * @see com.voucherx.fulfillment.RequestLedger#scheduleEventRetry
      */
-    private void one(Item item, Channel channel) throws IOException {
+    private void processSingleDelivery(Item item, Channel channel) throws IOException {
         long started = metrics.begin();
-        OrderPersistResult result;
+        PurchaseOrderCreationResult result;
         try {
-            result = orders.persist(item.message());
+            result = orders.createPurchaseOrder(item.message());
         } catch (StaleDeliveryException ex) {
             channel.basicAck(tag(item.delivery()), false);
             return;
         } catch (OrderBusinessException ex) {
             metrics.recordBusinessFailure(started);
             // 身份冲突不能关闭真实请求，也不能覆盖其状态缓存。
-            if (ledger.fail(item.message(), ex.failure().name())) {
+            if (ledger.recordBusinessRejection(item.message(), ex.failure().name())) {
                 statuses.markFailed(item.message().requestId(), item.message().messageId(), ex.failure().name());
                 channel.basicAck(tag(item.delivery()), false);
             } else
@@ -211,7 +213,7 @@ public class SeckillOrderConsumer {
         } catch (Exception ex) {
             metrics.recordFailure(started);
             log.warn("下单失败，按持久化事件安排重试，requestId={}", item.message().requestId(), ex);
-            ledger.defer(item.message(), ex.getClass().getSimpleName());
+            ledger.scheduleEventRetry(item.message(), ex.getClass().getSimpleName());
             channel.basicNack(tag(item.delivery()), false, false);
             return;
         } finally {
@@ -223,7 +225,7 @@ public class SeckillOrderConsumer {
             metrics.recordCreated(started);
         else
             metrics.recordDuplicate(started);
-        success(item, result, channel);
+        cacheResultAndAcknowledge(item, result, channel);
     }
 
     /**
@@ -240,7 +242,8 @@ public class SeckillOrderConsumer {
      * @throws IOException
      *                         通道 ACK 失败
      */
-    private void success(Item item, OrderPersistResult result, Channel channel) throws IOException {
+    private void cacheResultAndAcknowledge(Item item, PurchaseOrderCreationResult result, Channel channel)
+            throws IOException {
         statuses.markSuccess(item.message().requestId(), item.message().messageId(), result.orderId());
         channel.basicAck(tag(item.delivery()), false);
     }

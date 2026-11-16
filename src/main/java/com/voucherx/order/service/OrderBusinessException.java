@@ -6,7 +6,7 @@ package com.voucherx.order.service;
  * 消费者随后核对消息与账本身份、记录请求关闭及结果；符合补偿条件的预留由关闭和释放协议处理。
  *
  * @see OrderFailure
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  */
 public class OrderBusinessException extends RuntimeException {
 

@@ -6,7 +6,7 @@ package com.voucherx.fulfillment;
  * 触发条件包括活动冻结、代次失效及请求阶段尚未就绪。消费者确认本次交付，持久化请求继续由核对或恢复调度推进。
  * 消息身份不匹配由守卫分类为 OrderBusinessException。
  *
- * @see RequestLedger#guard
+ * @see RequestLedger#lockAndValidateForOrderCreation
  * @see com.voucherx.mq.consumer.SeckillOrderConsumer
  */
 public class StaleDeliveryException extends RuntimeException {

@@ -14,7 +14,7 @@
         VALUES (#{id}, #{compensationId}, #{now}, #{reason}, #{now})
         ]]>
     </insert>
-    <select id="lock" resultType="com.voucherx.reconcile.CompensationRecord" useCache="false">
+    <select id="selectByIdForUpdate" resultType="com.voucherx.reconcile.CompensationRecord" useCache="false">
         <![CDATA[
         SELECT compensation_id, state, attempts, next_at_ms, reason
         FROM tb_compensation

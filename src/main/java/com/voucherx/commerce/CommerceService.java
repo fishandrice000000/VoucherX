@@ -13,8 +13,8 @@ import java.util.UUID;
 /**
  * 接续已创建的购买订单，完成付款发券、消费锁券、核销及订单关闭。
  * <p>
- * initializePurchase 在建单事务内固定价格和权益；simulate 联合处理付款、权益和支付事件。
- * consume 联合插入消费单、绑定券锁和 LOCK 动作；取消和到期联合关闭订单与释放券锁。
+ * initializePurchase 在建单事务内固定价格和权益；simulatePayment 联合处理付款、权益和支付事件。
+ * createConsumptionOrder 联合插入消费单、绑定券锁和 LOCK 动作；取消和到期联合关闭订单与释放券锁。
  * <p>
  * 金额单位为分，绝对时间为 Unix 毫秒，有效时长为秒。写入按订单、用户券顺序加锁，lockToken 标识一次消费锁的归属。
  * 公开事务方法采用 REQUIRED，独立调用在代理返回时提交，外层已有事务时共同提交。
@@ -29,7 +29,7 @@ public class CommerceService {
     /**
      * 区分买券订单与用券消费订单；两者可能有相同数值 ID，定位时必须同时带上类型。
      */
-    public enum Kind {
+    public enum OrderKind {
         /**
          * 买券：付款成功后生成用户券。
          */
@@ -53,7 +53,7 @@ public class CommerceService {
      * @param orderState
      *                       此事件原先处理后保存的订单付款状态
      */
-    public record Receipt(String eventId, String outcome, String orderState) {
+    public record PaymentReceipt(String eventId, String outcome, String orderState) {
     }
 
     private final com.voucherx.recovery.FaultInjector faults;
@@ -89,17 +89,17 @@ public class CommerceService {
      *                      本次刚插入的购买订单 ID
      * @param voucherId
      *                      该订单绑定的券模板/活动 ID
-     * @see com.voucherx.order.service.OrderPersistenceService#persist
+     * @see com.voucherx.order.service.PurchaseOrderCreationService#createPurchaseOrder
      * @see com.voucherx.commerce.mapper.PurchaseOrderMapper#initialize
      */
     public void initializePurchase(long orderId, long voucherId) {
-        var v = purchases.terms(voucherId);
-        if (v == null)
+        var terms = purchases.terms(voucherId);
+        if (terms == null)
             throw new org.springframework.dao.EmptyResultDataAccessException(1);
-        if (v.payValue() < 0 || v.actualValue() <= 0 || v.minSpend() < 0
-                || v.validitySeconds() < 1 || v.validitySeconds() > 315360000L)
+        if (terms.payValue() < 0 || terms.actualValue() <= 0 || terms.minSpend() < 0
+                || terms.validitySeconds() < 1 || terms.validitySeconds() > 315360000L)
             throw new BusinessException(ErrorCode.INVALID_PARAM, "优惠券金额或有效期配置不合法");
-        purchases.initialize(orderId, v, clock.millis() + config.paymentTimeoutMillis());
+        purchases.initialize(orderId, terms, clock.millis() + config.paymentTimeoutMillis());
     }
 
     /**
@@ -114,62 +114,65 @@ public class CommerceService {
      * 消费原额 10000 分、面额 2000 分时应付 8000 分；订单截止取付款超时和券失效时刻的较早者。
      * 锁券建立本次消费归属，后续成功付款将该券核销为 USED。
      *
-     * @param user
-     *                     当前登录用户 ID
-     * @param shop
-     *                     消费商户 ID
+     * @param userId
+     *                           当前登录用户 ID
+     * @param shopId
+     *                           消费商户 ID
      * @param couponId
-     *                     用户券 ID，不是活动 ID
-     * @param original
-     *                     原消费金额，分，当前简化模型由请求传入
+     *                           用户券 ID，不是活动 ID
+     * @param originalAmount
+     *                           原消费金额，分，当前简化模型由请求传入
      * @return 新消费订单 ID；最终提交取决于当前最外层事务边界
-     * @see CommerceRules#discount
+     * @see CommerceRules#validateAndCalculateDiscount
      * @see com.voucherx.commerce.mapper.ConsumptionOrderMapper#insert
-     * @see com.voucherx.commerce.mapper.UserCouponMapper#tryLock
+     * @see com.voucherx.commerce.mapper.UserCouponMapper#markLockedForOrder
      */
     @Transactional
-    public long consume(long user, long shop, long couponId, long original) {
+    public long createConsumptionOrder(long userId, long shopId, long couponId, long originalAmount) {
         // 所有路径按订单 -> 券加锁；新订单插入和锁券失败一起回滚。
-        var preliminary = coupon(couponId, false);
-        String token = UUID.randomUUID().toString();
+        var couponBeforeLock = getCoupon(couponId);
+        String lockToken = UUID.randomUUID().toString();
         long now = clock.millis();
-        long discount = discount(preliminary, user, shop, original, now);
-        var draft = new ConsumptionOrder(0, user, shop, couponId, token, original, discount, original - discount,
+        long discount = validateAndCalculateDiscount(couponBeforeLock, userId, shopId, originalAmount, now);
+        var consumptionOrder = new ConsumptionOrder(0, userId, shopId, couponId, lockToken, originalAmount, discount,
+                originalAmount - discount,
                 "PENDING_PAYMENT",
-                Math.min(now + config.paymentTimeoutMillis(), preliminary.validUntilMs()), now);
-        var key = new GeneratedId();
-        consumptions.insert(draft, key);
-        if (key.getId() == null)
+                Math.min(now + config.paymentTimeoutMillis(), couponBeforeLock.validUntilMs()), now);
+        var generatedOrderId = new GeneratedId();
+        consumptions.insert(consumptionOrder, generatedOrderId);
+        if (generatedOrderId.getId() == null)
             throw new IllegalStateException("数据库未返回主键");
-        long id = key.getId();
-        var c = coupon(couponId, true);
-        discount(c, user, shop, original, now);
-        int changed = userCoupons.tryLock(couponId, id, token, c.version());
+        long consumptionOrderId = generatedOrderId.getId();
+        var lockedCoupon = getCouponForUpdate(couponId);
+        validateAndCalculateDiscount(lockedCoupon, userId, shopId, originalAmount, now);
+        int changed = userCoupons.markLockedForOrder(couponId, consumptionOrderId, lockToken, lockedCoupon.version());
         if (changed != 1)
             throw new BusinessException(ErrorCode.CONFLICT, "优惠券已被其他订单锁定");
-        action(couponId, id, token, "LOCK", now);
-        faults.hit(com.voucherx.recovery.FaultPoint.COUPON_LOCKED, String.valueOf(id), token);
-        return id;
+        recordCouponAction(couponId, consumptionOrderId, lockToken, "LOCK", now);
+        faults.hit(com.voucherx.recovery.FaultPoint.COUPON_LOCKED, String.valueOf(consumptionOrderId), lockToken);
+        return consumptionOrderId;
     }
 
     /**
      * 将用户券快照交给纯规则函数，检查归属、商户、时间、状态及门槛并计算优惠。
      *
-     * @param c
-     *                     用户券快照
-     * @param user
-     *                     当前用户 ID
-     * @param shop
-     *                     消费商户 ID
-     * @param original
-     *                     消费原价，分
-     * @param now
-     *                     本次操作时刻，Unix 毫秒
+     * @param coupon
+     *                           用户券快照
+     * @param userId
+     *                           当前用户 ID
+     * @param shopId
+     *                           消费商户 ID
+     * @param originalAmount
+     *                           消费原价，分
+     * @param nowMs
+     *                           本次操作时刻，Unix 毫秒
      * @return 不超过原价的实际优惠额，分
      */
-    private long discount(UserCoupon c, long user, long shop, long original, long now) {
-        return CommerceRules.discount(c.userId(), user, c.shopId(), shop, c.validFromMs(),
-                c.validUntilMs(), now, c.state(), c.minSpend(), c.faceValue(), original);
+    private long validateAndCalculateDiscount(UserCoupon coupon, long userId, long shopId, long originalAmount,
+            long nowMs) {
+        return CommerceRules.validateAndCalculateDiscount(coupon.userId(), userId, coupon.shopId(), shopId,
+                coupon.validFromMs(),
+                coupon.validUntilMs(), nowMs, coupon.state(), coupon.minSpend(), coupon.faceValue(), originalAmount);
     }
 
     /**
@@ -186,18 +189,18 @@ public class CommerceService {
      * 权益、订单状态与事件共同提交或回滚。success=false 返回 FAILED_ATTEMPT；已付款订单收到新的成功事件返回
      * ALREADY_PAID，已取消订单收到成功事件返回 CONFLICT_TERMINAL。
      *
-     * @param user
-     *                    当前登录用户 ID
-     * @param kind
-     *                    非空订单类型 PURCHASE 或 CONSUMPTION
-     * @param id
-     *                    该类型中的订单 ID
+     * @param userId
+     *                          当前登录用户 ID
+     * @param orderKind
+     *                          非空订单类型 PURCHASE 或 CONSUMPTION
+     * @param orderId
+     *                          该类型中的订单 ID
      * @param eventId
-     *                    全局支付事件幂等键，1 到 64 个允许字符
-     * @param amount
-     *                    声明支付金额，分，必须等于订单应付
+     *                          全局支付事件幂等键，1 到 64 个允许字符
+     * @param paymentAmount
+     *                          声明支付金额，分，必须等于订单应付
      * @param success
-     *                    本次模拟事件的支付成功声明
+     *                          本次模拟事件的支付成功声明
      * @return 本事件处理结果；重放时为首次处理回执，提交受最外层事务边界决定
      * @see CommerceRules#paymentOutcome
      * @see #issue
@@ -205,78 +208,81 @@ public class CommerceService {
      * @see #closeLocked
      */
     @Transactional
-    public Receipt simulate(long user, Kind kind, long id, String eventId, long amount, boolean success) {
+    public PaymentReceipt simulatePayment(long userId, OrderKind orderKind, long orderId, String eventId,
+            long paymentAmount, boolean success) {
         if (!config.simulationEnabled())
             throw new BusinessException(ErrorCode.NOT_FOUND, "模拟支付未启用");
-        if (eventId == null || !eventId.matches("[A-Za-z0-9._:-]{1,64}") || amount < 0)
+        if (eventId == null || !eventId.matches("[A-Za-z0-9._:-]{1,64}") || paymentAmount < 0)
             throw new BusinessException(ErrorCode.INVALID_PARAM);
-        var order = order(kind, id, user, true);
-        if (amount != order.payAmount())
+        var order = getOrderForUpdate(orderKind, orderId, userId);
+        if (paymentAmount != order.payAmount())
             throw new BusinessException(ErrorCode.CONFLICT, "付款金额与订单不一致");
-        var old = payments.find(eventId);
-        if (old != null) {
-            if (!kind.name().equals(old.orderKind()) || old.orderId() != id || old.userId() != user
-                    || old.amount() != amount || old.success() != success)
+        var existingPaymentEvent = payments.selectById(eventId);
+        if (existingPaymentEvent != null) {
+            if (!orderKind.name().equals(existingPaymentEvent.orderKind()) || existingPaymentEvent.orderId() != orderId
+                    || existingPaymentEvent.userId() != userId
+                    || existingPaymentEvent.amount() != paymentAmount || existingPaymentEvent.success() != success)
                 throw new BusinessException(ErrorCode.CONFLICT, "同一支付事件内容冲突");
-            return new Receipt(eventId, old.outcome(), old.orderState());
+            return new PaymentReceipt(eventId, existingPaymentEvent.outcome(), existingPaymentEvent.orderState());
         }
-        long now = clock.millis();
-        String state = order.paymentStatus();
-        String outcome = CommerceRules.paymentOutcome(state, order.paymentDeadlineMs(), now, success);
+        long nowMs = clock.millis();
+        String paymentStatus = order.paymentStatus();
+        String outcome = CommerceRules.paymentOutcome(paymentStatus, order.paymentDeadlineMs(), nowMs, success);
         if ("APPLIED".equals(outcome)) {
-            if (kind == Kind.PURCHASE)
-                issue((PurchaseOrder) order, now);
+            if (orderKind == OrderKind.PURCHASE)
+                issue((PurchaseOrderSnapshot) order, nowMs);
             else
-                redeem((ConsumptionOrder) order, now);
-            if ((kind == Kind.PURCHASE ? purchases.markPaid(id) : consumptions.markPaid(id)) != 1)
+                redeem((ConsumptionOrder) order, nowMs);
+            if ((orderKind == OrderKind.PURCHASE ? purchases.markPaid(orderId) : consumptions.markPaid(orderId)) != 1)
                 throw new BusinessException(ErrorCode.CONFLICT);
-            state = "PAID";
+            paymentStatus = "PAID";
         } else if ("CONFLICT_EXPIRED".equals(outcome)) {
-            closeLocked(kind, order, now);
-            state = "CANCELLED";
+            closeLocked(orderKind, order, nowMs);
+            paymentStatus = "CANCELLED";
         }
-        payments.insert(new PaymentEvent(eventId, kind.name(), id, user, amount, success, outcome, state, now));
-        faults.hit(com.voucherx.recovery.FaultPoint.PAYMENT_BEFORE_COMMIT, String.valueOf(id), eventId);
-        return new Receipt(eventId, outcome, state);
+        payments.insert(new PaymentEvent(eventId, orderKind.name(), orderId, userId, paymentAmount, success, outcome,
+                paymentStatus, nowMs));
+        faults.hit(com.voucherx.recovery.FaultPoint.PAYMENT_BEFORE_COMMIT, String.valueOf(orderId), eventId);
+        return new PaymentReceipt(eventId, outcome, paymentStatus);
     }
 
     /**
      * 按购买订单的权益快照发行 AVAILABLE 用户券，validFrom 使用当前付款处理时刻。
      * <p>
      * 有效秒数乘 1000 再加当前时刻得到 validUntil，使用精确整数运算检查溢出。
-     * 来源购买单唯一约束与订单行锁共同支持发行幂等；发券、PAID 和支付事件处于同一 simulate 事务。
+     * 来源购买单唯一约束与订单行锁共同支持发行幂等；发券、PAID 和支付事件处于同一 simulatePayment 事务。
      *
      * @param order
      *                  已持锁、允许应用付款的购买单快照
-     * @param now
+     * @param nowMs
      *                  本次付款处理 Unix 毫秒
      * @see com.voucherx.commerce.mapper.UserCouponMapper#issue
      */
-    private void issue(PurchaseOrder order, long now) {
-        userCoupons.issue(order, now, Math.addExact(now, Math.multiplyExact(order.couponValiditySeconds(), 1000)));
+    private void issue(PurchaseOrderSnapshot order, long nowMs) {
+        userCoupons.issue(order, nowMs, Math.addExact(nowMs, Math.multiplyExact(order.couponValiditySeconds(), 1000)));
     }
 
     /**
      * 在消费单锁保护下锁定用户券，核对 LOCKED 状态、用户、订单 ID、令牌及有效期。
      * <p>
-     * 通过后将券记为 USED、增加 version 并写 USE 动作；付款状态与支付事件由外层 simulate 一起提交。
+     * 通过后将券记为 USED、增加 version 并写 USE 动作；付款状态与支付事件由外层 simulatePayment 一起提交。
      * 券的锁归属字段保留本次使用信息，行锁覆盖检查到更新的全过程。
      *
      * @param order
      *                  已持行锁的待付消费单
-     * @param now
+     * @param nowMs
      *                  本次付款处理 Unix 毫秒
-     * @see #requireLock
-     * @see com.voucherx.commerce.mapper.UserCouponMapper#use
+     * @see #requireCouponOrderBinding
+     * @see com.voucherx.commerce.mapper.UserCouponMapper#markUsed
      */
-    private void redeem(ConsumptionOrder order, long now) {
+    private void redeem(ConsumptionOrder order, long nowMs) {
         long couponId = order.couponId();
-        var c = coupon(couponId, true);
-        requireLock(order, c);
-        if (now < c.validFromMs() || now >= c.validUntilMs())
+        var lockedCoupon = getCouponForUpdate(couponId);
+        requireCouponOrderBinding(order, lockedCoupon);
+        if (nowMs < lockedCoupon.validFromMs() || nowMs >= lockedCoupon.validUntilMs())
             throw new BusinessException(ErrorCode.CONFLICT, "优惠券已过期");
-        userCoupons.use(couponId);
-        action(couponId, order.id(), order.lockToken(), "USE", now);
+        userCoupons.markUsed(couponId);
+        recordCouponAction(couponId, order.id(), order.lockToken(), "USE", nowMs);
     }
 
     /**
@@ -288,24 +294,24 @@ public class CommerceService {
      * 例如消费单 5001 已取消、券被 5002/L2 锁定，再次取消 5001 直接返回，因此 5002 的锁保持有效。
      * 付款与取消通过同一订单行锁串行决定终态。
      *
-     * @param user
-     *                 当前登录用户 ID
-     * @param kind
-     *                 非空订单类型
-     * @param id
-     *                 对应类型的订单 ID
+     * @param userId
+     *                      当前登录用户 ID
+     * @param orderKind
+     *                      非空订单类型
+     * @param orderId
+     *                      对应类型的订单 ID
      * @return 正常关闭或幂等重放的 CANCELLED
      * @see #closeLocked
      */
     @Transactional
-    public String cancel(long user, Kind kind, long id) {
-        var order = order(kind, id, user, true);
+    public String cancel(long userId, OrderKind orderKind, long orderId) {
+        var order = getOrderForUpdate(orderKind, orderId, userId);
         String state = order.paymentStatus();
         if ("CANCELLED".equals(state))
             return state;
         if (!"PENDING_PAYMENT".equals(state))
             throw new BusinessException(ErrorCode.CONFLICT, "当前订单不允许取消");
-        closeLocked(kind, order, clock.millis());
+        closeLocked(orderKind, order, clock.millis());
         return "CANCELLED";
     }
 
@@ -315,20 +321,20 @@ public class CommerceService {
      * 扫描只是候选，此处复核可避免把已经被付款提交的订单关掉；已不存在或不满足条件就返回。
      * 这条内部任务路径不依赖 HTTP 用户上下文，和主动取消共用 closeLocked。
      *
-     * @param kind
-     *                 候选订单的非空类型
-     * @param id
-     *                 候选订单 ID
+     * @param orderKind
+     *                      候选订单的非空类型
+     * @param orderId
+     *                      候选订单 ID
      * @see CommerceExpiryJob#tick()
      */
     @Transactional
-    public void expire(Kind kind, long id) {
-        var order = readOrder(kind, id, true);
+    public void expire(OrderKind orderKind, long orderId) {
+        var order = selectOrderByIdForUpdate(orderKind, orderId);
         if (order == null)
             return;
         long now = clock.millis();
         if ("PENDING_PAYMENT".equals(order.paymentStatus()) && now >= order.paymentDeadlineMs())
-            closeLocked(kind, order, now);
+            closeLocked(orderKind, order, now);
     }
 
     /**
@@ -340,24 +346,25 @@ public class CommerceService {
      * 假设付款先获得订单锁并提交 PAID，取消将看到终态而不进入此处；取消先提交时，新成功付款只记录终态冲突。
      * 订单、券及动作在调用者同一事务中提交，方法本身不开新事务，也不实现退款或活动发行额度补偿。
      *
-     * @param kind
-     *                  订单类型
+     * @param orderKind
+     *                      订单类型
      * @param order
-     *                  已加锁且调用者确认允许关闭的订单
-     * @param now
-     *                  本次关闭判断使用的 Unix 毫秒
-     * @see #requireLock
+     *                      已加锁且调用者确认允许关闭的订单
+     * @param nowMs
+     *                      本次关闭判断使用的 Unix 毫秒
+     * @see #requireCouponOrderBinding
      * @see CommerceRules#releasedState
      */
-    private void closeLocked(Kind kind, CommerceOrder order, long now) {
-        if (kind == Kind.CONSUMPTION) {
+    private void closeLocked(OrderKind orderKind, CommerceOrder order, long nowMs) {
+        if (orderKind == OrderKind.CONSUMPTION) {
             var consumption = (ConsumptionOrder) order;
-            var c = coupon(consumption.couponId(), true);
-            requireLock(consumption, c);
-            userCoupons.release(c.id(), CommerceRules.releasedState(c.validUntilMs(), now));
-            action(c.id(), order.id(), consumption.lockToken(), "RELEASE", now);
+            var lockedCoupon = getCouponForUpdate(consumption.couponId());
+            requireCouponOrderBinding(consumption, lockedCoupon);
+            userCoupons.clearOrderBindingAndSetState(lockedCoupon.id(),
+                    CommerceRules.releasedState(lockedCoupon.validUntilMs(), nowMs));
+            recordCouponAction(lockedCoupon.id(), order.id(), consumption.lockToken(), "RELEASE", nowMs);
         }
-        if (kind == Kind.PURCHASE)
+        if (orderKind == OrderKind.PURCHASE)
             purchases.cancel(order.id());
         else
             consumptions.cancel(order.id());
@@ -376,7 +383,7 @@ public class CommerceService {
      * @throws com.voucherx.common.exception.BusinessException
      *                                                             任一锁归属不匹配
      */
-    private void requireLock(ConsumptionOrder order, UserCoupon coupon) {
+    private void requireCouponOrderBinding(ConsumptionOrder order, UserCoupon coupon) {
         if (!"LOCKED".equals(coupon.state()) || coupon.lockOrderId() == null
                 || coupon.lockOrderId() != order.id() || !order.lockToken().equals(coupon.lockToken())
                 || coupon.userId() != order.userId())
@@ -386,70 +393,93 @@ public class CommerceService {
     /**
      * 保存 LOCK、USE 或 RELEASE 动作及其用户券、消费单和归属令牌，与对应交易共同提交。
      *
-     * @param coupon
-     *                   用户券 ID
-     * @param order
-     *                   消费订单 ID
-     * @param token
-     *                   本轮券锁归属令牌
+     * @param couponId
+     *                      用户券 ID
+     * @param orderId
+     *                      消费订单 ID
+     * @param lockToken
+     *                      本轮券锁归属令牌
      * @param action
-     *                   LOCK、USE 或 RELEASE
-     * @param now
-     *                   动作 Unix 毫秒
+     *                      LOCK、USE 或 RELEASE
+     * @param nowMs
+     *                      动作 Unix 毫秒
      */
-    private void action(long coupon, long order, String token, String action, long now) {
-        actions.insert(coupon, order, token, action, now);
+    private void recordCouponAction(long couponId, long orderId, String lockToken, String action, long nowMs) {
+        actions.insert(couponId, orderId, lockToken, action, nowMs);
     }
 
     /**
-     * 读取指定类型订单并检查用户归属，其他用户的订单按不存在处理。
-     * <p>
-     * lock=true 时调用方须已有事务，才能把行锁保持到付款或关闭完成。
+     * 普通查询指定类型订单并核对用户归属。
      *
-     * @param kind
-     *                 订单类型
-     * @param id
-     *                 相应类型的订单 ID
-     * @param user
-     *                 当前用户 ID
-     * @param lock
-     *                 是否使用 FOR UPDATE
-     * @return 属于当前用户的订单快照
+     * @param orderKind
+     *                      购买单或消费单类型
+     * @param orderId
+     *                      相应类型的订单 ID
+     * @param userId
+     *                      当前登录用户 ID
+     * @return 当前用户拥有的订单快照
      */
-    public CommerceOrder order(Kind kind, long id, long user, boolean lock) {
-        var order = readOrder(kind, id, lock);
-        if (order == null || order.userId() != user)
+    public CommerceOrder getOrder(OrderKind orderKind, long orderId, long userId) {
+        return requireOwnedOrder(selectOrderById(orderKind, orderId), userId);
+    }
+
+    /**
+     * 以 FOR UPDATE 取得订单行锁并核对用户归属；调用方事务须覆盖后续付款或关闭。
+     *
+     * @param orderKind
+     *                      购买单或消费单类型
+     * @param orderId
+     *                      相应类型的订单 ID
+     * @param userId
+     *                      当前登录用户 ID
+     * @return 当前用户拥有的已加锁订单
+     */
+    public CommerceOrder getOrderForUpdate(OrderKind orderKind, long orderId, long userId) {
+        return requireOwnedOrder(selectOrderByIdForUpdate(orderKind, orderId), userId);
+    }
+
+    /** 核对已读取订单的存在性与用户归属。 */
+    private CommerceOrder requireOwnedOrder(CommerceOrder order, long userId) {
+        if (order == null || order.userId() != userId)
             throw new BusinessException(ErrorCode.ORDER_NOT_FOUND);
         return order;
     }
 
-    /**
-     * 按类型选择购买单或消费单 Mapper，按需使用 FOR UPDATE；只负责读取，不校验用户归属。
-     *
-     * @param kind
-     *                 订单类型
-     * @param id
-     *                 对应类型的订单 ID
-     * @param lock
-     *                 是否请求行锁；事务由调用者提供
-     * @return 订单；不存在时为 {@code null}
-     */
-    private CommerceOrder readOrder(Kind kind, long id, boolean lock) {
-        return kind == Kind.PURCHASE ? (lock ? purchases.lock(id) : purchases.find(id))
-                : (lock ? consumptions.lock(id) : consumptions.find(id));
+    /** 按订单类型选择 Mapper 普通查询，返回值可以为空。 */
+    private CommerceOrder selectOrderById(OrderKind orderKind, long orderId) {
+        return orderKind == OrderKind.PURCHASE ? purchases.selectById(orderId) : consumptions.selectById(orderId);
+    }
+
+    /** 按订单类型选择 Mapper 的 FOR UPDATE 查询；行锁由调用方事务保持，返回值可以为空。 */
+    private CommerceOrder selectOrderByIdForUpdate(OrderKind orderKind, long orderId) {
+        return orderKind == OrderKind.PURCHASE ? purchases.selectByIdForUpdate(orderId)
+                : consumptions.selectByIdForUpdate(orderId);
     }
 
     /**
-     * 按需加锁读取用户券；此方法只校验存在性，归属及业务状态由调用方进一步验证。
+     * 普通查询用户券并校验存在性，归属和使用规则由调用方验证。
      *
-     * @param id
-     *                 用户券 ID
-     * @param lock
-     *                 是否使用 FOR UPDATE；为 true 时调用方须已有事务
-     * @return 用户券快照；不存在时抛业务错误
+     * @param couponId
+     *                     用户券 ID
+     * @return 用户券快照
      */
-    public UserCoupon coupon(long id, boolean lock) {
-        var coupon = lock ? userCoupons.lock(id) : userCoupons.find(id);
+    public UserCoupon getCoupon(long couponId) {
+        return requireCoupon(userCoupons.selectById(couponId));
+    }
+
+    /**
+     * 以 FOR UPDATE 取得用户券行锁并校验存在性；调用方按订单、券顺序加锁并保持事务。
+     *
+     * @param couponId
+     *                     用户券 ID
+     * @return 已加锁的用户券快照
+     */
+    public UserCoupon getCouponForUpdate(long couponId) {
+        return requireCoupon(userCoupons.selectByIdForUpdate(couponId));
+    }
+
+    /** 统一检查用户券查询结果的存在性。 */
+    private UserCoupon requireCoupon(UserCoupon coupon) {
         if (coupon == null)
             throw new BusinessException(ErrorCode.NOT_FOUND, "优惠券不存在");
         return coupon;
@@ -460,18 +490,18 @@ public class CommerceService {
      * <p>
      * after 是上一页末尾的券 ID；结果包含该用户各状态的券，供客户端展示及选择。
      *
-     * @param user
-     *                  当前登录用户 ID
-     * @param after
-     *                  上一页最后一张用户券 ID，首页为 0
-     * @param size
-     *                  页大小，1 到 100
+     * @param userId
+     *                          当前登录用户 ID
+     * @param afterCouponId
+     *                          上一页最后一张用户券 ID，首页为 0
+     * @param pageSize
+     *                          页大小，1 到 100
      * @return 用户自己的券列表；没有更多时为空列表
      */
-    public List<UserCoupon> coupons(long user, long after, int size) {
-        if (after < 0 || size < 1 || size > 100)
+    public List<UserCoupon> coupons(long userId, long afterCouponId, int pageSize) {
+        if (afterCouponId < 0 || pageSize < 1 || pageSize > 100)
             throw new BusinessException(ErrorCode.INVALID_PARAM);
-        return userCoupons.page(user, after, size);
+        return userCoupons.page(userId, afterCouponId, pageSize);
     }
 
     /**
@@ -485,7 +515,7 @@ public class CommerceService {
      *                  本轮最多返回条数
      * @return 候选订单 ID，按付款截止时间排序
      */
-    public List<Long> expiredOrderIds(Kind kind, long now, int limit) {
-        return kind == Kind.PURCHASE ? purchases.expiredIds(now, limit) : consumptions.expiredIds(now, limit);
+    public List<Long> expiredOrderIds(OrderKind kind, long now, int limit) {
+        return kind == OrderKind.PURCHASE ? purchases.expiredIds(now, limit) : consumptions.expiredIds(now, limit);
     }
 }

@@ -39,7 +39,7 @@ public interface ActivityControlMapper {
      *
      * @return 控制快照；不存在为 null
      */
-    Control lockShared(@Param("voucherId") long voucherId);
+    Control selectByVoucherIdForShare(@Param("voucherId") long voucherId);
 
     /**
      * 初始化时独占锁定活动控制行，与受理、建单以及冻结恢复互斥。
@@ -48,7 +48,7 @@ public interface ActivityControlMapper {
      *                      活动 ID
      * @return 当前状态及代次；锁持续至服务层事务结束
      */
-    Control lockExclusive(@Param("voucherId") long voucherId);
+    Control selectByVoucherIdForUpdate(@Param("voucherId") long voucherId);
 
     /**
      * 普通查询指定活动是否 NORMAL 且 epoch 匹配；这是瞬时检查。

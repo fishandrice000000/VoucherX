@@ -13,7 +13,7 @@ import org.apache.ibatis.annotations.Update;
  * Redis 只做活动级总额度预留，本接口在 MySQL 事务中确定实际扣减桶。
  * 桶号在同一活动下由主键保证唯一，布局版本与正库存是每次扣减必须同时匹配的条件。
  *
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  * @see com.voucherx.seckill.service.SeckillStockInitializer
  * @see BucketLayoutStats
  */

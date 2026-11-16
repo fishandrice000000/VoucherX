@@ -23,14 +23,14 @@
             #{order.createdAtMs})
         ]]>
     </insert>
-    <select id="find" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
+    <select id="selectById" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_consumption_order
         WHERE id=#{id}
         ]]>
     </select>
-    <select id="lock" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
+    <select id="selectByIdForUpdate" resultType="com.voucherx.commerce.model.ConsumptionOrder" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_consumption_order

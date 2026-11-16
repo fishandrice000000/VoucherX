@@ -11,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *                                        等待 RabbitMQ 发布确认的超时，毫秒，项目配置默认 5000
  * @param bucketAttempts
  *                                        单次建单允许尝试的候选桶数，默认 3；实际按至少 1、至多桶总数限幅
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  */
 @ConfigurationProperties(prefix = "voucherx.seckill")
 public record SeckillProperties(

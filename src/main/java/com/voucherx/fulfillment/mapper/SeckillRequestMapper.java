@@ -18,7 +18,7 @@ public interface SeckillRequestMapper {
      *               请求 ID
      * @return 请求快照；不存在为 null
      */
-    RequestRecord find(@Param("id") String id);
+    RequestRecord selectById(@Param("id") String id);
 
     /**
      * 按用户及客户端幂等键查询原请求；同一用户下键唯一。
@@ -38,7 +38,7 @@ public interface SeckillRequestMapper {
      *               请求 ID
      * @return 当前请求；不存在为 null
      */
-    RequestRecord lock(@Param("id") String id);
+    RequestRecord selectByIdForUpdate(@Param("id") String id);
 
     /**
      * 插入意图及固定身份、代次、布局；初始 phase 和 reservation 使用表默认值 INTENT/UNKNOWN。
@@ -73,7 +73,8 @@ public interface SeckillRequestMapper {
     /**
      * 按请求 ID 写 ACCEPTED/RESERVED。
      * <p>
-     * RequestLedger.accept 在请求行锁内核对 INTENT，并在同事务中插入 Outbox，形成完整可靠受理事实。
+     * RequestLedger.acceptAndEnqueueEvent 在请求行锁内核对 INTENT，并在同事务中插入
+     * Outbox，形成完整可靠受理事实。
      *
      * @param id
      *                已持锁且确认仍为 INTENT 的请求 ID

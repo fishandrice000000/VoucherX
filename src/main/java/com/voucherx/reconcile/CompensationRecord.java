@@ -16,7 +16,8 @@ package com.voucherx.reconcile;
  * @param nextAtMs
  *                           最早可再次尝试的 Unix 毫秒；终态不会仅因时间到了而自动再执行
  * @param reason
- *                           首次意图保存的释放原因，重复 prepare 不覆盖
+ *                           首次意图保存的释放原因，重复 closeRequestAndPrepareCompensation
+ *                           不覆盖
  */
 public record CompensationRecord(String compensationId, String state, int attempts, long nextAtMs, String reason) {
 }

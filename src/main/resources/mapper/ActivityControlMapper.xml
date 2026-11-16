@@ -14,7 +14,7 @@
         VALUES (#{voucherId})
         ]]>
     </insert>
-    <select id="lockShared" resultType="com.voucherx.fulfillment.ActivityGate$Control" useCache="false">
+    <select id="selectByVoucherIdForShare" resultType="com.voucherx.fulfillment.ActivityGate$Control" useCache="false">
         <![CDATA[
         SELECT state, epoch
         FROM tb_activity_control
@@ -30,7 +30,7 @@
         AND epoch=#{epoch}
         ]]>
     </select>
-    <select id="lockExclusive" resultType="com.voucherx.fulfillment.ActivityGate$Control" useCache="false">
+    <select id="selectByVoucherIdForUpdate" resultType="com.voucherx.fulfillment.ActivityGate$Control" useCache="false">
         SELECT state, epoch FROM tb_activity_control WHERE voucher_id=#{voucherId} FOR UPDATE
     </select>
 </mapper>

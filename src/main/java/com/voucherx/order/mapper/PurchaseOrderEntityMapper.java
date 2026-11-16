@@ -1,7 +1,7 @@
 package com.voucherx.order.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.voucherx.order.entity.VoucherOrder;
+import com.voucherx.order.entity.PurchaseOrderEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -9,13 +9,13 @@ import org.apache.ibatis.annotations.Select;
 /**
  * 秒杀购买订单的基础 Mapper，映射 tb_voucher_order。
  * <p>
- * insert 等基础方法由 MyBatis-Plus BaseMapper 提供；自增主键回填到 VoucherOrder.id。
+ * insert 等基础方法由 MyBatis-Plus BaseMapper 提供；自增主键回填到 PurchaseOrderEntity.id。
  * 本接口读取建单身份，付款和权益快照的完整视图另见 PurchaseOrderMapper。
  *
  * @see com.voucherx.commerce.mapper.PurchaseOrderMapper
  */
 @Mapper
-public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
+public interface PurchaseOrderEntityMapper extends BaseMapper<PurchaseOrderEntity> {
 
     /**
      * 按请求唯一身份查订单，供重复消息幂等和对账核对使用。
@@ -26,7 +26,7 @@ public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
      * @return 购买订单；不存在为 null
      */
     @Select("SELECT * FROM tb_voucher_order WHERE request_id = #{requestId} LIMIT 1")
-    VoucherOrder selectByRequestId(@Param("requestId") String requestId);
+    PurchaseOrderEntity selectByRequestId(@Param("requestId") String requestId);
 
     /**
      * 提前检查该用户是否已有活动订单，减少无意义扣库存；最终仍以数据库唯一约束为准。
@@ -43,7 +43,7 @@ public interface VoucherOrderMapper extends BaseMapper<VoucherOrder> {
              WHERE voucher_id = #{voucherId} AND user_id = #{userId}
              LIMIT 1
             """)
-    VoucherOrder selectByVoucherAndUser(@Param("voucherId") Long voucherId,
+    PurchaseOrderEntity selectByVoucherAndUser(@Param("voucherId") Long voucherId,
             @Param("userId") Long userId);
 
     /**

@@ -6,7 +6,7 @@ import com.voucherx.admission.CompletionMetrics;
 import com.voucherx.mq.consumer.SeckillOrderConsumer;
 import com.voucherx.order.service.*;
 import com.voucherx.seckill.model.SeckillOrderMessage;
-import com.voucherx.seckill.service.SeckillRequestStatusStore;
+import com.voucherx.seckill.service.SeckillRequestStatusCache;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
@@ -25,9 +25,9 @@ import static org.mockito.Mockito.*;
  */
 class DeliveryUnitTest {
     private final ObjectMapper mapper = new ObjectMapper();
-    private final OrderPersistenceService orders = mock(OrderPersistenceService.class);
+    private final PurchaseOrderCreationService orders = mock(PurchaseOrderCreationService.class);
     private final RequestLedger ledger = mock(RequestLedger.class);
-    private final SeckillRequestStatusStore statuses = mock(SeckillRequestStatusStore.class);
+    private final SeckillRequestStatusCache statuses = mock(SeckillRequestStatusCache.class);
     private final Channel channel = mock(Channel.class);
     private final SeckillOrderMessage first = message("first", 1L);
 
@@ -85,33 +85,35 @@ class DeliveryUnitTest {
     }
 
     /**
-     * 模拟持久化返回订单 7，验证先调用 persist，再写 SUCCESS，最后 basicAck(1,false)；只证明调用顺序，不执行真实事务。
+     * 模拟持久化返回订单 7，验证先调用 createPurchaseOrder，再写 SUCCESS，最后
+     * basicAck(1,false)；只证明调用顺序，不执行真实事务。
      *
      * @throws Exception
      *                       测试序列化或通道交互异常
      */
     @Test
     void acknowledgesOnlyAfterPersistenceReturns() throws Exception {
-        when(orders.persist(first)).thenReturn(new OrderPersistResult(7L, true));
+        when(orders.createPurchaseOrder(first)).thenReturn(new PurchaseOrderCreationResult(7L, true));
         consumer(false).onMessages(java.util.List.of(delivery(first, 1)), channel);
         var sequence = inOrder(orders, statuses, channel);
-        sequence.verify(orders).persist(first);
+        sequence.verify(orders).createPurchaseOrder(first);
         sequence.verify(statuses).markSuccess("first", "e-first", 7L);
         sequence.verify(channel).basicAck(1, false);
     }
 
     /**
-     * 模拟事务服务抛临时异常，验证先调用账本 defer，再 NACK(1,false,false)，且未 ACK；持久重试是否真实提交需组件验证。
+     * 模拟事务服务抛临时异常，验证先调用账本 scheduleEventRetry，再 NACK(1,false,false)，且未
+     * ACK；持久重试是否真实提交需组件验证。
      *
      * @throws Exception
      *                       测试序列化或通道交互异常
      */
     @Test
     void rollbackRequeuesDurablyBeforeDeadLetteringOriginal() throws Exception {
-        when(orders.persist(first)).thenThrow(new IllegalStateException("DB unavailable"));
+        when(orders.createPurchaseOrder(first)).thenThrow(new IllegalStateException("DB unavailable"));
         consumer(false).onMessages(java.util.List.of(delivery(first, 1)), channel);
         var sequence = inOrder(ledger, channel);
-        sequence.verify(ledger).defer(first, "IllegalStateException");
+        sequence.verify(ledger).scheduleEventRetry(first, "IllegalStateException");
         sequence.verify(channel).basicNack(1, false, false);
         verify(channel, never()).basicAck(anyLong(), anyBoolean());
     }
@@ -124,7 +126,7 @@ class DeliveryUnitTest {
      */
     @Test
     void staleDeliveryDoesNotCloseOriginalRequest() throws Exception {
-        when(orders.persist(first)).thenThrow(new StaleDeliveryException());
+        when(orders.createPurchaseOrder(first)).thenThrow(new StaleDeliveryException());
         consumer(false).onMessages(java.util.List.of(delivery(first, 1)), channel);
         verifyNoInteractions(ledger, statuses);
         verify(channel).basicAck(1, false);
@@ -138,15 +140,18 @@ class DeliveryUnitTest {
      */
     @Test
     void identityConflictCannotOverwriteBusinessResult() throws Exception {
-        when(orders.persist(first)).thenThrow(new OrderBusinessException(OrderFailure.INVALID_REQUEST, "conflict"));
-        when(ledger.fail(first, "INVALID_REQUEST")).thenReturn(false);
+        when(orders.createPurchaseOrder(first))
+                .thenThrow(new OrderBusinessException(OrderFailure.INVALID_REQUEST, "conflict"));
+        when(ledger.recordBusinessRejection(first, "INVALID_REQUEST")).thenReturn(false);
         consumer(false).onMessages(java.util.List.of(delivery(first, 1)), channel);
         verifyNoInteractions(statuses);
         verify(channel).basicNack(1, false, false);
     }
 
     /**
-     * 两项的批服务调用抛异常后，验证按 first.persist→ACK1→second.persist→ACK2 有界回退；模拟异常本身不是数据库回滚证据。
+     * 两项的批服务调用抛异常后，验证按
+     * first.createPurchaseOrder→ACK1→second.createPurchaseOrder→ACK2
+     * 有界回退；模拟异常本身不是数据库回滚证据。
      *
      * @throws Exception
      *                       测试序列化或通道交互异常
@@ -154,15 +159,16 @@ class DeliveryUnitTest {
     @Test
     void batchRollbackSplitsWithoutEarlyAcknowledgement() throws Exception {
         var second = message("second", 2L);
-        when(orders.persistBatch(List.of(first, second))).thenThrow(new IllegalStateException("bad batch"));
-        when(orders.persist(first)).thenReturn(new OrderPersistResult(7L, true));
-        when(orders.persist(second)).thenReturn(new OrderPersistResult(8L, true));
+        when(orders.createPurchaseOrdersInBatch(List.of(first, second)))
+                .thenThrow(new IllegalStateException("bad batch"));
+        when(orders.createPurchaseOrder(first)).thenReturn(new PurchaseOrderCreationResult(7L, true));
+        when(orders.createPurchaseOrder(second)).thenReturn(new PurchaseOrderCreationResult(8L, true));
         consumer(true).onMessages(List.of(delivery(first, 1), delivery(second, 2)), channel);
         var sequence = inOrder(orders, channel);
-        sequence.verify(orders).persistBatch(List.of(first, second));
-        sequence.verify(orders).persist(first);
+        sequence.verify(orders).createPurchaseOrdersInBatch(List.of(first, second));
+        sequence.verify(orders).createPurchaseOrder(first);
         sequence.verify(channel).basicAck(1, false);
-        sequence.verify(orders).persist(second);
+        sequence.verify(orders).createPurchaseOrder(second);
         sequence.verify(channel).basicAck(2, false);
     }
 

@@ -18,7 +18,7 @@ import java.util.UUID;
  * <p>
  * SENT 记录发布确认，QUARANTINED 记录投递隔离；请求的建单阶段保存在账本中，由消费事务推进。
  *
- * @see RequestLedger#accept
+ * @see RequestLedger#acceptAndEnqueueEvent
  * @see com.voucherx.mq.publisher.SeckillMessagePublisher
  * @see com.voucherx.mq.consumer.SeckillOrderConsumer
  */
@@ -120,7 +120,7 @@ public class OutboxDispatcher {
     /**
      * 以 eventId、claim_token 和 CLAIMED 状态条件回写发布结果、下次发送时间并清空令牌。
      * <p>
-     * 条件由当前令牌归属决定；令牌仍匹配时原认领者可回写，接手或 defer 改写令牌后其更新数为 0。
+     * 条件由当前令牌归属决定；令牌仍匹配时原认领者可回写，接手或 scheduleEventRetry 改写令牌后其更新数为 0。
      *
      * @param id
      *                   固定 Outbox 事件 ID

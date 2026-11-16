@@ -26,7 +26,7 @@ public interface RecoveryMapper {
      *
      * @return 控制快照；控制行不存在时为 null
      */
-    Control findControl(@Param("voucher") long voucher);
+    Control selectByVoucherId(@Param("voucher") long voucher);
 
     /**
      * 以 FOR UPDATE 独占锁定活动控制行，与正常发行的 FOR SHARE 互斥。
@@ -38,7 +38,7 @@ public interface RecoveryMapper {
      *
      * @return 独占锁下的控制快照；不存在时为 null
      */
-    Control lockControl(@Param("voucher") long voucher);
+    Control selectByVoucherIdForUpdate(@Param("voucher") long voucher);
 
     /**
      * 检查秒杀活动是否存在，避免为不存在的活动创建冻结任务。
@@ -250,12 +250,12 @@ public interface RecoveryMapper {
      *
      * @return 更新计数
      */
-    int releaseClosedRequests(@Param("voucher") long voucher, @Param("now") long now);
+    int markClosedReservationsReleased(@Param("voucher") long voucher, @Param("now") long now);
 
     /**
      * 将已关闭且预留已释放请求的补偿任务同步为 RELEASED。
      * <p>
-     * 调用前已完成 Redis 重建及 releaseClosedRequests；更新范围为符合请求条件的所有补偿任务。
+     * 调用前已完成 Redis 重建及 markClosedReservationsReleased；更新范围为符合请求条件的所有补偿任务。
      *
      * @param voucher
      *                    活动 ID
@@ -264,7 +264,7 @@ public interface RecoveryMapper {
      *
      * @return 更新计数
      */
-    int releaseCompensations(@Param("voucher") long voucher, @Param("now") long now);
+    int markCompensationsReleased(@Param("voucher") long voucher, @Param("now") long now);
 
     /**
      * 检查 ACCEPTED 请求是否都绑定当前 epoch 且存在 PENDING Outbox。

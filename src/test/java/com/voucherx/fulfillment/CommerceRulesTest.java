@@ -108,6 +108,7 @@ class CommerceRulesTest {
      */
     private long discount(long owner, long user, long couponShop, long shop, long from, long until, long now,
             String state, long min, long face, long original) {
-        return CommerceRules.discount(owner, user, couponShop, shop, from, until, now, state, min, face, original);
+        return CommerceRules.validateAndCalculateDiscount(owner, user, couponShop, shop, from, until, now, state, min,
+                face, original);
     }
 }

@@ -122,7 +122,7 @@ public class SeckillStockService {
      * @param epoch
      *                      与当前请求及活动核对的恢复代次
      * @return 已达到该请求释放结果时为 true，否则由调用方重试或隔离
-     * @see com.voucherx.reconcile.CompensationService#execute
+     * @see com.voucherx.reconcile.CompensationService#releaseReservationAndRecordResult
      * @see com.voucherx.common.redis.RedisKeys
      */
     public boolean release(Long voucherId, Long userId, String requestId, String reason, long epoch) {

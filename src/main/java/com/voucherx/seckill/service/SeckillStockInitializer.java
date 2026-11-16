@@ -3,7 +3,7 @@ package com.voucherx.seckill.service;
 import com.voucherx.common.redis.RedisKeys;
 import com.voucherx.fulfillment.mapper.ActivityControlMapper;
 import com.voucherx.fulfillment.mapper.SeckillRequestMapper;
-import com.voucherx.order.mapper.VoucherOrderMapper;
+import com.voucherx.order.mapper.PurchaseOrderEntityMapper;
 import com.voucherx.voucher.entity.StockMode;
 import com.voucherx.voucher.mapper.SeckillVoucherBucketMapper;
 import com.voucherx.voucher.mapper.SeckillVoucherMapper;
@@ -35,13 +35,13 @@ public class SeckillStockInitializer implements ApplicationRunner {
     private final SeckillRequestMapper requests;
     private final SeckillVoucherMapper activities;
     private final SeckillVoucherBucketMapper buckets;
-    private final VoucherOrderMapper orders;
+    private final PurchaseOrderEntityMapper orders;
     private final SeckillStockService stock;
     private final StringRedisTemplate redis;
     private final TransactionTemplate tx;
 
     public SeckillStockInitializer(SeckillVoucherMapper activities, SeckillVoucherBucketMapper buckets,
-            VoucherOrderMapper orders, SeckillStockService stock, ActivityControlMapper controls,
+            PurchaseOrderEntityMapper orders, SeckillStockService stock, ActivityControlMapper controls,
             SeckillRequestMapper requests, StringRedisTemplate redis, PlatformTransactionManager manager) {
         this.activities = activities;
         this.buckets = buckets;
@@ -87,7 +87,7 @@ public class SeckillStockInitializer implements ApplicationRunner {
         try {
             return Boolean.TRUE.equals(tx.execute(status -> {
                 controls.insertIfAbsent(voucherId);
-                var control = controls.lockExclusive(voucherId);
+                var control = controls.selectByVoucherIdForUpdate(voucherId);
                 if (control == null || !"NORMAL".equals(control.state()) || control.epoch() < 1)
                     return false;
                 var activity = activities.selectById(voucherId);

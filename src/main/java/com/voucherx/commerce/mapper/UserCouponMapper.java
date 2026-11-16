@@ -4,12 +4,13 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import java.util.List;
 import com.voucherx.commerce.model.UserCoupon;
-import com.voucherx.commerce.model.PurchaseOrder;
+import com.voucherx.commerce.model.PurchaseOrderSnapshot;
 
 /**
  * 访问用户券的发行、锁定、核销和释放数据，映射 tb_user_coupon。
  * <p>
- * tryLock 具有状态与 version 条件，use 具有 LOCKED 条件，release 按券 ID 更新。
+ * markLockedForOrder 具有状态与 version 条件，markUsed 具有 LOCKED
+ * 条件，clearOrderBindingAndSetState 按券 ID 更新。
  * 交易服务负责订单锁、券锁、用户归属和令牌校验，事务覆盖完整检查及写入过程。
  *
  * @see com.voucherx.commerce.CommerceService
@@ -24,7 +25,7 @@ public interface UserCouponMapper {
      *               用户券 ID
      * @return 用户券；不存在为 null
      */
-    UserCoupon find(@Param("id") long id);
+    UserCoupon selectById(@Param("id") long id);
 
     /**
      * FOR UPDATE 锁券行；与订单联合操作时由服务层先锁订单再锁券。
@@ -33,7 +34,7 @@ public interface UserCouponMapper {
      *               用户券 ID
      * @return 用户券；不存在为 null
      */
-    UserCoupon lock(@Param("id") long id);
+    UserCoupon selectByIdForUpdate(@Param("id") long id);
 
     /**
      * 按用户过滤，查询 id 大于游标的券并按 id 递增返回。
@@ -64,7 +65,7 @@ public interface UserCouponMapper {
      *                    锁券行查询返回的当前版本
      * @return 1 为锁定成功，0 为状态/版本不匹配或券不存在
      */
-    int tryLock(@Param("id") long id, @Param("orderId") long orderId, @Param("token") String token,
+    int markLockedForOrder(@Param("id") long id, @Param("orderId") long orderId, @Param("token") String token,
             @Param("version") long version);
 
     /**
@@ -81,7 +82,7 @@ public interface UserCouponMapper {
      *                  券失效 Unix 毫秒
      * @return 插入行数；来源唯一约束冲突会抛异常
      */
-    int issue(@Param("order") PurchaseOrder order, @Param("now") long now, @Param("until") long until);
+    int issue(@Param("order") PurchaseOrderSnapshot order, @Param("now") long now, @Param("until") long until);
 
     /**
      * 将 LOCKED 券更新为 USED 并增加 version，保留消费归属字段用于追溯。
@@ -92,12 +93,12 @@ public interface UserCouponMapper {
      *               已核验本次锁归属的用户券 ID
      * @return 更新行数；状态不为 LOCKED 或不存在时为 0
      */
-    int use(@Param("id") long id);
+    int markUsed(@Param("id") long id);
 
     /**
      * 按券 ID 写 AVAILABLE 或 EXPIRED，清空锁订单 ID 和令牌，并增加 version。
      * <p>
-     * 关闭流程先持订单与券行锁并通过 requireLock；释放结果由券的有效期确定。此操作释放消费使用权。
+     * 关闭流程先持订单与券行锁并通过 requireCouponOrderBinding；释放结果由券的有效期确定。此操作释放消费使用权。
      *
      * @param id
      *                  已核验当前消费单归属的用户券 ID
@@ -105,7 +106,7 @@ public interface UserCouponMapper {
      *                  依失效时间计算出的 AVAILABLE 或 EXPIRED
      * @return 更新行数
      */
-    int release(@Param("id") long id, @Param("state") String state);
+    int clearOrderBindingAndSetState(@Param("id") long id, @Param("state") String state);
 
     /**
      * 仅批量更新 valid_until_ms 已到且仍 AVAILABLE 的券为 EXPIRED，version 加一；不直接释放 LOCKED 券。

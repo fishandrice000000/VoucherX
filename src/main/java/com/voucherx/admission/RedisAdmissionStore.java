@@ -89,7 +89,7 @@ public class RedisAdmissionStore {
      *
      * @return Redis 查询未抛数据访问异常时为 true；异常时为 false
      */
-    public boolean isAvailable() {
+    public boolean probeRedisConnectivity() {
         try {
             redisTemplate.hasKey(RedisKeys.admissionSharedPolicy());
             return true;

@@ -86,7 +86,7 @@
         AND state='SENT'
         ]]>
     </update>
-    <update id="completeRequest">
+    <update id="markDoneByRequestId">
         <![CDATA[
         UPDATE tb_outbox
         SET state='DONE', claim_token=NULL, last_result=#{result}

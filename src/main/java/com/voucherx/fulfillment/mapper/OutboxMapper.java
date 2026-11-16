@@ -69,7 +69,7 @@ public interface OutboxMapper {
     /**
      * 按 event_id、claim_token 和 CLAIMED 条件更新发布结果及 next_at_ms，并清空令牌。
      * <p>
-     * 令牌保持匹配即可回写；接手或 defer 更换令牌后，先前发送者的更新数为 0。SENT 记录本次发布确认。
+     * 令牌保持匹配即可回写；接手或 scheduleEventRetry 更换令牌后，先前发送者的更新数为 0。SENT 记录本次发布确认。
      *
      * @param id
      *                   固定事件 ID
@@ -150,5 +150,5 @@ public interface OutboxMapper {
      *                   完成投递跟踪的原因，例如 REQUEST_CLOSED
      * @return 实际更新行数
      */
-    int completeRequest(@Param("id") String id, @Param("result") String result);
+    int markDoneByRequestId(@Param("id") String id, @Param("result") String result);
 }

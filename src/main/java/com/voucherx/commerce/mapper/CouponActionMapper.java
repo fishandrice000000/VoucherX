@@ -6,7 +6,8 @@ import org.apache.ibatis.annotations.Param;
 /**
  * 用户券 LOCK、USE、RELEASE 的动作流水，在各自交易事务中同步写入。
  * <p>
- * 唯一约束 (coupon_id, lock_token, action) 限制同一轮锁的同种动作重复记录；同一张券重新锁定会使用新令牌。
+ * 唯一约束 (coupon_id, lock_token, action)
+ * 限制同一轮锁的同种动作重复记录；同一张券重新锁定会使用新令牌。
  * 动作表用于追溯，不代表异步 MQ 投递，也不代替券表当前状态。
  *
  * @see com.voucherx.commerce.CommerceService

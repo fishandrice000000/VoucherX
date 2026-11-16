@@ -7,7 +7,8 @@ import java.time.Clock;
 /**
  * 保存修复动作、观察依据、结果标签及时间，供按请求追踪处理过程。
  * <p>
- * 在 prepare、execute 中调用时加入对应事务；repair 顶层记录通常独立写入。
+ * 在 closeRequestAndPrepareCompensation、releaseReservationAndRecordResult
+ * 中调用时加入对应事务；repair 顶层记录通常独立写入。
  * 一次修复可记录多条审计，实际返还进度以补偿记录及请求预留状态核对。
  *
  * @see com.voucherx.reconcile.mapper.RepairAuditMapper

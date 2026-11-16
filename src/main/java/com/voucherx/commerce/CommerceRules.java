@@ -47,7 +47,8 @@ public final class CommerceRules {
      * @throws com.voucherx.common.exception.BusinessException
      *                                                             归属、商户、金额门槛、状态或有效期不满足
      */
-    public static long discount(long owner, long user, long couponShop, long shop, long from, long until,
+    public static long validateAndCalculateDiscount(long owner, long user, long couponShop, long shop, long from,
+            long until,
             long now, String state, long minSpend, long face, long original) {
         if (owner != user)
             throw new BusinessException(ErrorCode.FORBIDDEN);
@@ -80,7 +81,8 @@ public final class CommerceRules {
      * <li>待付单达到截止时刻返回 CONFLICT_EXPIRED，仍在期限内返回 APPLIED。</li>
      * </ol>
      * <p>
-     * 例如截止 200：now=199 可以应用，now=200 进入到期处理。同 eventId 的重复调用由 simulate 返回其首次处理回执。
+     * 例如截止 200：now=199 可以应用，now=200 进入到期处理。同 eventId 的重复调用由 simulatePayment
+     * 返回其首次处理回执。
      *
      * @param state
      *                     订单当前付款状态
@@ -91,7 +93,7 @@ public final class CommerceRules {
      * @param success
      *                     本事件声明是否支付成功
      * @return 处理分类；仅 APPLIED 应用权益，CONFLICT_EXPIRED 进入关闭
-     * @see CommerceService#simulate
+     * @see CommerceService#simulatePayment
      */
     public static String paymentOutcome(String state, long deadline, long now, boolean success) {
         if (!success)

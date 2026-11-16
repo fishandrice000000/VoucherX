@@ -37,7 +37,7 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     @Autowired
     com.voucherx.reconcile.CompensationService compensation;
     @Autowired
-    com.voucherx.order.service.OrderPersistenceService persistence;
+    com.voucherx.order.service.PurchaseOrderCreationService persistence;
     @Autowired
     com.voucherx.reconcile.ReconciliationService reconciliation;
     @Autowired
@@ -97,21 +97,24 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         await().atMost(Duration.ofSeconds(10))
                 .untilAsserted(() -> assertThat(ledger.find(accepted.requestId()).orderId()).isNotNull());
         long purchase = ledger.find(accepted.requestId()).orderId();
-        var purchaseKind = com.voucherx.commerce.CommerceService.Kind.PURCHASE;
-        var consumeKind = com.voucherx.commerce.CommerceService.Kind.CONSUMPTION;
-        assertThat(commerce.simulate(1, purchaseKind, purchase, "pay-buy", 100, true).outcome()).isEqualTo("APPLIED");
-        assertThat(commerce.simulate(1, purchaseKind, purchase, "pay-buy", 100, true).outcome()).isEqualTo("APPLIED");
+        var purchaseKind = com.voucherx.commerce.CommerceService.OrderKind.PURCHASE;
+        var consumeKind = com.voucherx.commerce.CommerceService.OrderKind.CONSUMPTION;
+        assertThat(commerce.simulatePayment(1, purchaseKind, purchase, "pay-buy", 100, true).outcome())
+                .isEqualTo("APPLIED");
+        assertThat(commerce.simulatePayment(1, purchaseKind, purchase, "pay-buy", 100, true).outcome())
+                .isEqualTo("APPLIED");
         assertThat(commerce.coupons(1, 0, 20)).hasSize(1);
         long coupon = commerce.coupons(1, 0, 20).getFirst().id();
-        long cancelled = commerce.consume(1, 1, coupon, 2000);
+        long cancelled = commerce.createConsumptionOrder(1, 1, coupon, 2000);
         assertThat(commerce.cancel(1, consumeKind, cancelled)).isEqualTo("CANCELLED");
-        long consume = commerce.consume(1, 1, coupon, 2000);
-        assertThat(commerce.simulate(1, consumeKind, cancelled, "late-pay", 1000, true).outcome())
+        long consume = commerce.createConsumptionOrder(1, 1, coupon, 2000);
+        assertThat(commerce.simulatePayment(1, consumeKind, cancelled, "late-pay", 1000, true).outcome())
                 .isEqualTo("CONFLICT_TERMINAL");
-        assertThat(commerce.simulate(1, consumeKind, consume, "pay-use", 1000, true).outcome()).isEqualTo("APPLIED");
-        assertThat(commerce.simulate(1, consumeKind, consume, "pay-use-again", 1000, true).outcome())
+        assertThat(commerce.simulatePayment(1, consumeKind, consume, "pay-use", 1000, true).outcome())
+                .isEqualTo("APPLIED");
+        assertThat(commerce.simulatePayment(1, consumeKind, consume, "pay-use-again", 1000, true).outcome())
                 .isEqualTo("ALREADY_PAID");
-        assertThat(commerce.coupon(coupon, false).state()).isEqualTo("USED");
+        assertThat(commerce.getCoupon(coupon).state()).isEqualTo("USED");
         assertThat(
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_coupon_action WHERE action='USE'", Integer.class))
                 .isEqualTo(1);
@@ -122,11 +125,12 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
     /**
      * 真实组件补偿链路，从用户 1、活动 1、库存 10 的受理未投递请求开始。
      * <p>
-     * prepare 提交请求关闭，再执行两次 execute；Redis 库存最终为 10，关闭请求的建单被拒绝，订单数为 0，
+     * closeRequestAndPrepareCompensation 提交请求关闭，再执行两次
+     * releaseReservationAndRecordResult；Redis 库存最终为 10，关闭请求的建单被拒绝，订单数为 0，
      * 重新诊断为 WAIT。该用例验证补偿重复执行的幂等性及请求终态屏障。
      *
-     * @see com.voucherx.reconcile.CompensationService#prepare
-     * @see com.voucherx.reconcile.CompensationService#execute
+     * @see com.voucherx.reconcile.CompensationService#closeRequestAndPrepareCompensation
+     * @see com.voucherx.reconcile.CompensationService#releaseReservationAndRecordResult
      */
     @Test
     void durableClosureAndRepeatedCompensationReturnStockOnce() {
@@ -135,12 +139,12 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         initializer.initializeSafely(1L);
         var accepted = service.seckill(1L, 1L, "compensate");
         var message = ledger.find(accepted.requestId()).message();
-        compensation.prepare(accepted.requestId(), "SMOKE_CLOSED");
-        assertThat(compensation.execute(accepted.requestId())).isEqualTo("RELEASED");
-        assertThat(compensation.execute(accepted.requestId())).isEqualTo("RELEASED");
+        compensation.closeRequestAndPrepareCompensation(accepted.requestId(), "SMOKE_CLOSED");
+        assertThat(compensation.releaseReservationAndRecordResult(accepted.requestId())).isEqualTo("RELEASED");
+        assertThat(compensation.releaseReservationAndRecordResult(accepted.requestId())).isEqualTo("RELEASED");
         assertThat(redisTemplate.opsForValue().get(com.voucherx.common.redis.RedisKeys.seckillStock(1L)))
                 .isEqualTo("10");
-        assertThatThrownBy(() -> persistence.persist(message))
+        assertThatThrownBy(() -> persistence.createPurchaseOrder(message))
                 .isInstanceOf(com.voucherx.order.service.OrderBusinessException.class);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_voucher_order", Integer.class)).isZero();
         assertThat(reconciliation.diagnose(accepted.requestId()).action())
@@ -169,7 +173,7 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         assertThat(recovery.recover(1).state()).isEqualTo("NORMAL");
         assertThat(redisTemplate.opsForValue().get(com.voucherx.common.redis.RedisKeys.seckillStock(1L)))
                 .isEqualTo("9");
-        assertThatThrownBy(() -> persistence.persist(old))
+        assertThatThrownBy(() -> persistence.createPurchaseOrder(old))
                 .isInstanceOf(com.voucherx.order.service.OrderBusinessException.class);
         assertThat(ledger.find(accepted.requestId()).phase()).isEqualTo("ACCEPTED");
         assertThat(dispatcher.dispatch()).isEqualTo(1);

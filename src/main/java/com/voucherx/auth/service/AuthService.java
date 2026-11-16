@@ -63,8 +63,8 @@ public class AuthService {
      * @return 手机号、有效秒数及可选调试验证码
      */
     public CodeResponse sendCode(String phone, String clientIp) {
-        checkIpLimit(clientIp);
-        checkPhoneCooldown(phone);
+        consumeIpSendQuota(clientIp);
+        acquirePhoneSendCooldown(phone);
 
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         redisTemplate.opsForValue().set(RedisKeys.authCode(phone), code, authProperties.codeTtl());
@@ -143,7 +143,7 @@ public class AuthService {
      * @param clientIp
      *                     请求远端 IP；空值不计数
      */
-    private void checkIpLimit(String clientIp) {
+    private void consumeIpSendQuota(String clientIp) {
         if (clientIp == null || clientIp.isBlank()) {
             return;
         }
@@ -163,7 +163,7 @@ public class AuthService {
      * @param phone
      *                  申请验证码的手机号
      */
-    private void checkPhoneCooldown(String phone) {
+    private void acquirePhoneSendCooldown(String phone) {
         String key = RedisKeys.authCodeCooldown(phone);
         Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
                 key, "1", Duration.ofSeconds(authProperties.codeCooldownSeconds()));

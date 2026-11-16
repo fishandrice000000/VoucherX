@@ -45,7 +45,9 @@ public enum ReconcileDecision {
      * <li>ACCEPTED 的事件缺失或 QUARANTINED 时隔离，SENT 时建议重投，其他投递状态等待。</li>
      * </ol>
      * <p>
-     * 修复入口继续核对活动和代次；释放动作通过 prepare、execute 和 Lua 校验当前身份及归属。
+     * 修复入口继续核对活动和代次；释放动作通过
+     * closeRequestAndPrepareCompensation、releaseReservationAndRecordResult 和 Lua
+     * 校验当前身份及归属。
      *
      * @param r
      *                               已存在的请求账本快照

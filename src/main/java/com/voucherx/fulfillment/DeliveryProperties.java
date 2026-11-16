@@ -19,7 +19,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param maxAttempts
  *                            失败发布/消费重试路径的认领尝试预算，默认 8
  * @param retryMillis
- *                            基础重试等待，毫秒，默认 1000；发布失败做指数退避，消费 defer 使用固定等待
+ *                            基础重试等待，毫秒，默认 1000；发布失败做指数退避，消费 scheduleEventRetry
+ *                            使用固定等待
  * @param batchEnabled
  *                            是否尝试一个事务处理多条消息，默认 false
  * @param batchSize
@@ -73,7 +74,7 @@ public record DeliveryProperties(@DefaultValue("true") boolean enabled,
      * 按认领尝试次数计算发布失败的指数退避，最多等待 60000 毫秒。
      * <p>
      * 指数取 attempt-1 并限制到 0～10；基础等待默认 1000 毫秒，对应 1、2、4 秒等序列。
-     * 消费 defer 使用单独配置的固定 retryMillis。
+     * 消费 scheduleEventRetry 使用单独配置的固定 retryMillis。
      *
      * @param attempt
      *                    当前累计认领次数，正常从 1 开始

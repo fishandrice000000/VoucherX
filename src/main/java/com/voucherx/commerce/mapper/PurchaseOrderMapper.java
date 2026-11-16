@@ -3,7 +3,7 @@ package com.voucherx.commerce.mapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import java.util.List;
-import com.voucherx.commerce.model.PurchaseOrder;
+import com.voucherx.commerce.model.PurchaseOrderSnapshot;
 import com.voucherx.commerce.model.VoucherTerms;
 
 /**
@@ -44,7 +44,7 @@ public interface PurchaseOrderMapper {
      *               购买订单 ID
      * @return 购买订单；不存在为 null
      */
-    PurchaseOrder find(@Param("id") long id);
+    PurchaseOrderSnapshot selectById(@Param("id") long id);
 
     /**
      * FOR UPDATE 锁购买单，付款、主动取消、到期关闭均先取得这行锁；用户归属检查由服务层完成。
@@ -53,7 +53,7 @@ public interface PurchaseOrderMapper {
      *               购买订单 ID
      * @return 当前购买单快照；不存在为 null，锁由调用者事务保持
      */
-    PurchaseOrder lock(@Param("id") long id);
+    PurchaseOrderSnapshot selectByIdForUpdate(@Param("id") long id);
 
     /**
      * 将 PENDING_PAYMENT 条件更新为 PAID。

@@ -14,7 +14,7 @@ import com.voucherx.commerce.model.UserCoupon;
  * 交易 HTTP 入口，提供购买付款、用户券查询、消费锁券、消费付款核销、取消及订单查询。
  * <p>
  * 用户身份来自认证上下文，服务层核对订单与券归属，并计算优惠、应付和有效期限。
- * Payment 和 Receipt 使用接口字段命名，订单与用户券查询模型以 snake_case 序列化。
+ * SimulatedPaymentRequest 和 PaymentReceipt 使用接口字段命名，订单与用户券查询模型以 snake_case 序列化。
  *
  * @see CommerceService
  * @see com.voucherx.commerce.model.UserCoupon
@@ -41,14 +41,15 @@ public class CommerceController {
      * @param originalAmount
      *                           原消费金额，分，必须为正
      */
-    public record Consume(@Positive long shopId, @Positive long couponId, @Positive long originalAmount) {
+    public record CreateConsumptionOrderRequest(@Positive long shopId, @Positive long couponId,
+            @Positive long originalAmount) {
     }
 
     /**
      * 接收模拟支付事件，显式启用模拟支付配置后可调用。
      * <p>
      * orderKind 与 orderId 定位业务订单，eventId 标识全局支付事件；同事件重试应保持类型、订单、金额和结果声明一致。
-     * Receipt.outcome 表示该事件的处理分类和权益应用结果。
+     * PaymentReceipt.outcome 表示该事件的处理分类和权益应用结果。
      *
      * @param orderKind
      *                      PURCHASE 购买券或 CONSUMPTION 用券消费
@@ -61,7 +62,7 @@ public class CommerceController {
      * @param success
      *                      本次模拟成功与否；false 只记录失败尝试
      */
-    public record Payment(@NotNull CommerceService.Kind orderKind, @Positive long orderId,
+    public record SimulatedPaymentRequest(@NotNull CommerceService.OrderKind orderKind, @Positive long orderId,
             @NotBlank @Size(max = 64) String eventId, @PositiveOrZero long amount, boolean success) {
     }
 
@@ -73,9 +74,11 @@ public class CommerceController {
      * @return 包含 orderId 的成功响应
      */
     @PostMapping("/consumption-orders")
-    public ApiResponse<Map<String, Long>> consume(@Valid @RequestBody Consume body) {
+    public ApiResponse<Map<String, Long>> createConsumptionOrder(
+            @Valid @RequestBody CreateConsumptionOrderRequest body) {
         return ApiResponse.ok(Map.of("orderId",
-                service.consume(UserContext.getRequired(), body.shopId(), body.couponId(), body.originalAmount())));
+                service.createConsumptionOrder(UserContext.getRequired(), body.shopId(), body.couponId(),
+                        body.originalAmount())));
     }
 
     /**
@@ -86,11 +89,12 @@ public class CommerceController {
      * @param body
      *                 模拟支付事件，金额单位分
      * @return 支付事件回执；orderState 在重放时是原事件保存的快照
-     * @see CommerceService#simulate
+     * @see CommerceService#simulatePayment
      */
     @PostMapping("/payments/simulate")
-    public ApiResponse<CommerceService.Receipt> pay(@Valid @RequestBody Payment body) {
-        return ApiResponse.ok(service.simulate(UserContext.getRequired(), body.orderKind(), body.orderId(),
+    public ApiResponse<CommerceService.PaymentReceipt> simulatePayment(
+            @Valid @RequestBody SimulatedPaymentRequest body) {
+        return ApiResponse.ok(service.simulatePayment(UserContext.getRequired(), body.orderKind(), body.orderId(),
                 body.eventId(), body.amount(), body.success()));
     }
 
@@ -104,8 +108,8 @@ public class CommerceController {
      * @return 包含应付金额及付款状态的订单详情
      */
     @GetMapping("/orders/{kind}/{id}")
-    public ApiResponse<CommerceOrder> order(@PathVariable CommerceService.Kind kind, @PathVariable long id) {
-        return ApiResponse.ok(service.order(kind, id, UserContext.getRequired(), false));
+    public ApiResponse<CommerceOrder> getOrder(@PathVariable CommerceService.OrderKind kind, @PathVariable long id) {
+        return ApiResponse.ok(service.getOrder(kind, id, UserContext.getRequired()));
     }
 
     /**
@@ -118,7 +122,8 @@ public class CommerceController {
      * @return 最终订单状态，正常为 CANCELLED
      */
     @PostMapping("/orders/{kind}/{id}/cancel")
-    public ApiResponse<Map<String, String>> cancel(@PathVariable CommerceService.Kind kind, @PathVariable long id) {
+    public ApiResponse<Map<String, String>> cancelOrder(@PathVariable CommerceService.OrderKind kind,
+            @PathVariable long id) {
         return ApiResponse.ok(Map.of("state", service.cancel(UserContext.getRequired(), kind, id)));
     }
 
@@ -132,7 +137,7 @@ public class CommerceController {
      * @return 按 ID 递增排列的用户券列表
      */
     @GetMapping("/coupons")
-    public ApiResponse<List<UserCoupon>> coupons(@RequestParam(defaultValue = "0") long after,
+    public ApiResponse<List<UserCoupon>> listCoupons(@RequestParam(defaultValue = "0") long after,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(service.coupons(UserContext.getRequired(), after, size));
     }

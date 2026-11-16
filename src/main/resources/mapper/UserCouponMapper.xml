@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.voucherx.commerce.mapper.UserCouponMapper">
-    <select id="find" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
+    <select id="selectById" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_user_coupon
         WHERE id=#{id}
         ]]>
     </select>
-    <select id="lock" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
+    <select id="selectByIdForUpdate" resultType="com.voucherx.commerce.model.UserCoupon" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_user_coupon
@@ -25,7 +25,7 @@
         LIMIT #{limit}
         ]]>
     </select>
-    <update id="tryLock">
+    <update id="markLockedForOrder">
         <![CDATA[
         UPDATE tb_user_coupon
         SET state='LOCKED', lock_order_id=#{orderId}, lock_token=#{token}, version=version+1
@@ -54,7 +54,7 @@
             #{until})
         ]]>
     </insert>
-    <update id="use">
+    <update id="markUsed">
         <![CDATA[
         UPDATE tb_user_coupon
         SET state='USED', version=version+1
@@ -62,7 +62,7 @@
         AND state='LOCKED'
         ]]>
     </update>
-    <update id="release">
+    <update id="clearOrderBindingAndSetState">
         <![CDATA[
         UPDATE tb_user_coupon
         SET state=#{state}, lock_order_id=NULL, lock_token=NULL, version=version+1

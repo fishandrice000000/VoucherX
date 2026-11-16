@@ -6,16 +6,16 @@ import com.voucherx.common.exception.BusinessException;
 import com.voucherx.common.redis.RedisKeys;
 import com.voucherx.mq.config.RabbitMqConfig;
 import com.voucherx.mq.publisher.SeckillMessagePublisher;
-import com.voucherx.order.entity.VoucherOrder;
-import com.voucherx.order.mapper.VoucherOrderMapper;
+import com.voucherx.order.entity.PurchaseOrderEntity;
+import com.voucherx.order.mapper.PurchaseOrderEntityMapper;
 import com.voucherx.order.service.OrderBusinessException;
 import com.voucherx.order.service.OrderFailure;
-import com.voucherx.order.service.OrderPersistenceService;
+import com.voucherx.order.service.PurchaseOrderCreationService;
 import com.voucherx.seckill.dto.SeckillAcceptResponse;
 import com.voucherx.seckill.dto.SeckillRequestStatusResponse;
 import com.voucherx.seckill.model.SeckillOrderMessage;
 import com.voucherx.seckill.model.SeckillRequestStatus;
-import com.voucherx.seckill.service.SeckillRequestStatusStore;
+import com.voucherx.seckill.service.SeckillRequestStatusCache;
 import com.voucherx.seckill.service.SeckillService;
 import com.voucherx.seckill.service.SeckillStockInitializer;
 import com.voucherx.seckill.service.SeckillStockService;
@@ -54,7 +54,7 @@ import static org.awaitility.Awaitility.await;
  * preparedMessage 为仅检验 MySQL 事务的夹具，准备账本并隔离自动投递。
  * 并发用例断言数量及库存约束；吞吐与延迟由独立性能实验评估。
  *
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  * @see com.voucherx.seckill.service.SeckillStockService
  */
 @org.springframework.test.context.TestPropertySource(properties = "voucherx.fault.enabled=true")
@@ -67,11 +67,11 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private SeckillStockService stockService;
     @Autowired
-    private SeckillRequestStatusStore statusStore;
+    private SeckillRequestStatusCache statusStore;
     @Autowired
     private SeckillMessagePublisher publisher;
     @Autowired
-    private VoucherOrderMapper orderMapper;
+    private PurchaseOrderEntityMapper orderMapper;
     @Autowired
     private SeckillVoucherMapper seckillVoucherMapper;
     @Autowired
@@ -79,7 +79,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private SeckillStockInitializer stockInitializer;
     @Autowired
-    private OrderPersistenceService orderPersistenceService;
+    private PurchaseOrderCreationService orderPersistenceService;
 
     @Autowired
     private com.voucherx.fulfillment.RequestLedger ledger;
@@ -191,7 +191,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         });
 
         SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
-        VoucherOrder committed = orderMapper.selectById(status.orderId());
+        PurchaseOrderEntity committed = orderMapper.selectById(status.orderId());
         assertThat(committed.getRequestId()).isEqualTo(accepted.requestId());
         assertThat(committed.getCompletedAtMs()).isPositive();
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isZero();
@@ -290,24 +290,24 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         createActivity(VOUCHER_ID, 2, 2, LocalDateTime.now().minusHours(1),
                 LocalDateTime.now().plusHours(1));
 
-        VoucherOrder first = new VoucherOrder();
+        PurchaseOrderEntity first = new PurchaseOrderEntity();
         first.setRequestId(UUID.randomUUID().toString());
         first.setMessageId(UUID.randomUUID().toString());
         first.setUserId(1L);
         first.setVoucherId(VOUCHER_ID);
-        first.setStatus(VoucherOrder.STATUS_CREATED);
+        first.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         first.setStockMode("SINGLE");
         first.setBucketNo(0);
         first.setLayoutVersion(1);
         first.setCompletedAtMs(System.currentTimeMillis());
         orderMapper.insert(first);
 
-        VoucherOrder duplicate = new VoucherOrder();
+        PurchaseOrderEntity duplicate = new PurchaseOrderEntity();
         duplicate.setRequestId(UUID.randomUUID().toString());
         duplicate.setMessageId(UUID.randomUUID().toString());
         duplicate.setUserId(1L);
         duplicate.setVoucherId(VOUCHER_ID);
-        duplicate.setStatus(VoucherOrder.STATUS_CREATED);
+        duplicate.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         duplicate.setStockMode("SINGLE");
         duplicate.setBucketNo(0);
         duplicate.setLayoutVersion(1);
@@ -354,7 +354,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         var message = preparedMessage(1, VOUCHER_ID, 0, 1, "SINGLE");
         faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), "rollback-single",
                 com.voucherx.recovery.FaultInjector.Action.FAIL);
-        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(message))
                 .isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isEqualTo(3);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
@@ -430,17 +430,17 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                 LocalDateTime.now().plusHours(1));
 
         SeckillOrderMessage wrongMode = bucketMessage(1L, VOUCHER_ID, 0, 1, "SINGLE");
-        assertThatThrownBy(() -> orderPersistenceService.persist(wrongMode))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(wrongMode))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
 
         SeckillOrderMessage wrongBucket = bucketMessage(1L, VOUCHER_ID, 4, 1, "BUCKET");
-        assertThatThrownBy(() -> orderPersistenceService.persist(wrongBucket))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(wrongBucket))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
 
         SeckillOrderMessage wrongLayout = bucketMessage(1L, VOUCHER_ID, 0, 2, "BUCKET");
-        assertThatThrownBy(() -> orderPersistenceService.persist(wrongLayout))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(wrongLayout))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
 
@@ -469,7 +469,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         initializeRedisState(VOUCHER_ID, 100);
         SeckillOrderMessage message = bucketMessage(1L, VOUCHER_ID, 0, 1, "BUCKET");
-        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(message))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LAYOUT_MISMATCH));
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(100);
@@ -497,7 +497,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         // 用户 5 起始桶 5，最多尝试 5/6/7，不会触达仍有库存的桶 0。
         SeckillOrderMessage message = bucketMessage(5L, VOUCHER_ID, 5, 1, "BUCKET");
-        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(message))
                 .isInstanceOfSatisfying(OrderBusinessException.class,
                         ex -> assertThat(ex.failure()).isEqualTo(OrderFailure.LOCAL_SOLD_OUT));
 
@@ -516,7 +516,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         var message = preparedMessage(1, VOUCHER_ID, 0, 1, "BUCKET");
         faults.arm(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), "rollback-bucket",
                 com.voucherx.recovery.FaultInjector.Action.FAIL);
-        assertThatThrownBy(() -> orderPersistenceService.persist(message))
+        assertThatThrownBy(() -> orderPersistenceService.createPurchaseOrder(message))
                 .isInstanceOf(com.voucherx.recovery.FaultInjector.InjectedFault.class);
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isEqualTo(10);
         assertThat(orderMapper.countByVoucherId(VOUCHER_ID)).isZero();
@@ -552,7 +552,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         // 用户 4 的起始桶为 0，桶 0 分配到了唯一一张库存。
         SeckillAcceptResponse accepted = seckillService.seckill(4L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
         awaitOrderCount(1);
-        VoucherOrder order = orderMapper.selectByRequestId(accepted.requestId());
+        PurchaseOrderEntity order = orderMapper.selectByRequestId(accepted.requestId());
 
         SeckillOrderMessage duplicate = new SeckillOrderMessage(
                 order.getMessageId(), accepted.requestId(), 4L, VOUCHER_ID,
@@ -747,7 +747,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
     /**
      * 在一个 TransactionTemplate 事务中写意图、完成受理，再把对应 Outbox 事件设为 QUARANTINED。
      * <p>
-     * intent/accept 使用默认 REQUIRED，加入这个外层事务。隔离事件可防止后台消费者与本测试直接调用 persist 竞争。
+     * createIntent/acceptAndEnqueueEvent 使用默认
+     * REQUIRED，加入这个外层事务。隔离事件可防止后台消费者与本测试直接调用 createPurchaseOrder 竞争。
      * 返回消息保持账本身份，但跳过 Redis 预扣和真实 MQ 投递，专用于验证 MySQL 布局判断及回滚。
      * 不能把此夹具的成功当作完整抢券流程已运行。
      *
@@ -765,8 +766,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
      */
     private SeckillOrderMessage preparedMessage(long user, long voucher, int bucket, int layout, String mode) {
         return new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
-            var request = ledger.intent(user, voucher, UUID.randomUUID().toString(), mode, bucket, layout);
-            ledger.accept(request.requestId());
+            var request = ledger.createIntent(user, voucher, UUID.randomUUID().toString(), mode, bucket, layout);
+            ledger.acceptAndEnqueueEvent(request.requestId());
             jdbcTemplate.update("UPDATE tb_outbox SET state='QUARANTINED' WHERE request_id=?", request.requestId());
             return request.message();
         });

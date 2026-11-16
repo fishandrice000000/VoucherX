@@ -2,10 +2,10 @@ package com.voucherx.seckill;
 
 import com.voucherx.AbstractIntegrationTest;
 import com.voucherx.mq.config.RabbitMqConfig;
-import com.voucherx.order.service.OrderPersistenceService;
+import com.voucherx.order.service.PurchaseOrderCreationService;
 import com.voucherx.seckill.dto.SeckillAcceptResponse;
 import com.voucherx.seckill.model.SeckillRequestStatus;
-import com.voucherx.seckill.service.SeckillRequestStatusStore;
+import com.voucherx.seckill.service.SeckillRequestStatusCache;
 import com.voucherx.seckill.service.SeckillService;
 import com.voucherx.seckill.service.SeckillStockService;
 import org.junit.jupiter.api.Test;
@@ -42,12 +42,12 @@ class SeckillConsumerReliabilityTest extends AbstractIntegrationTest {
     @Autowired
     private SeckillStockService stockService;
     @Autowired
-    private SeckillRequestStatusStore statusStore;
+    private SeckillRequestStatusCache statusStore;
     @Autowired
     private RabbitTemplate rabbitTemplate;
 
     @SpyBean
-    private OrderPersistenceService orderPersistenceService;
+    private PurchaseOrderCreationService orderPersistenceService;
 
     @Test
     void transientFailureIsRetriedAfterDelayThenSucceeds() {
@@ -58,7 +58,7 @@ class SeckillConsumerReliabilityTest extends AbstractIntegrationTest {
 
         doThrow(new DataAccessResourceFailureException("模拟数据库瞬时失败"))
                 .doCallRealMethod()
-                .when(orderPersistenceService).persist(any());
+                .when(orderPersistenceService).createPurchaseOrder(any());
 
         SeckillAcceptResponse accepted = seckillService.seckill(1L, VOUCHER_ID, java.util.UUID.randomUUID().toString());
 
@@ -72,7 +72,7 @@ class SeckillConsumerReliabilityTest extends AbstractIntegrationTest {
             assertThat(orders).isEqualTo(1);
         });
 
-        verify(orderPersistenceService, times(2)).persist(any());
+        verify(orderPersistenceService, times(2)).createPurchaseOrder(any());
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
     }
 

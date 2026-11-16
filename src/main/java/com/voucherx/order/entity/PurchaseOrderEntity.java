@@ -9,12 +9,12 @@ import java.time.LocalDateTime;
 /**
  * 秒杀建单时写入的基础购买订单实体；映射 tb_voucher_order，ID 由数据库自增并由 MyBatis-Plus 回填。
  * <p>
- * 这里只表达请求、库存布局及建单状态；付款状态和权益快照的完整读取模型是 PurchaseOrder。
+ * 这里只表达请求、库存布局及建单状态；付款状态和权益快照的完整读取模型是 PurchaseOrderSnapshot。
  *
- * @see com.voucherx.commerce.model.PurchaseOrder
+ * @see com.voucherx.commerce.model.PurchaseOrderSnapshot
  */
 @TableName("tb_voucher_order")
-public class VoucherOrder {
+public class PurchaseOrderEntity {
 
     /**
      * 基础订单创建成功值 1，不代表已付款。

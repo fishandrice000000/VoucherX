@@ -19,14 +19,14 @@ import java.util.List;
  * 对外查询由 SeckillService 读取 MySQL 请求账本；缓存写入异常记录日志，已提交订单继续有效。
  */
 @Service
-public class SeckillRequestStatusStore {
+public class SeckillRequestStatusCache {
 
-    private static final Logger log = LoggerFactory.getLogger(SeckillRequestStatusStore.class);
+    private static final Logger log = LoggerFactory.getLogger(SeckillRequestStatusCache.class);
 
     private final StringRedisTemplate redisTemplate;
     private final DefaultRedisScript<Long> statusScript;
 
-    public SeckillRequestStatusStore(StringRedisTemplate redisTemplate,
+    public SeckillRequestStatusCache(StringRedisTemplate redisTemplate,
             @Qualifier("seckillRequestStatusScript") DefaultRedisScript<Long> statusScript) {
         this.redisTemplate = redisTemplate;
         this.statusScript = statusScript;

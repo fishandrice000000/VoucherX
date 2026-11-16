@@ -18,7 +18,8 @@ import java.time.ZoneId;
 /**
  * 抢券业务编排：活动校验、保存请求意图、Redis 预留、提交受理与 Outbox。
  * <p>
- * intent 和 accept 各自通过 RequestLedger 的事务代理执行，Redis 预留位于两次数据库提交之间。
+ * createIntent 和 acceptAndEnqueueEvent 各自通过 RequestLedger 的事务代理执行，Redis
+ * 预留位于两次数据库提交之间。
  * 预留结果未知时保留意图，供客户端查询及对账查证；同用户同幂等键复用已有请求。
  * 受理提交后由 {@link com.voucherx.fulfillment.OutboxDispatcher#dispatch} 接续异步投递。
  */
@@ -50,7 +51,8 @@ public class SeckillService {
      * <p>
      * 预留 Lua 接收用户、活动、请求、时间、布局及代次：非负结果表示预留成功，负数结果触发请求关闭和业务拒绝。
      * Redis 调用结果未知时返回 UNKNOWN，并保留持久化意图用于查证。
-     * 预留成功后，accept 同事务提交 ACCEPTED/RESERVED 和待发事件，返回 PROCESSING；消费者随后执行 MySQL 建单事务。
+     * 预留成功后，acceptAndEnqueueEvent 同事务提交 ACCEPTED/RESERVED 和待发事件，返回
+     * PROCESSING；消费者随后执行 MySQL 建单事务。
      *
      * @param user
      *                      已认证用户 ID
@@ -61,7 +63,7 @@ public class SeckillService {
      * @return 新请求的 PROCESSING/UNKNOWN，或同键原请求的当前状态
      * @see com.voucherx.seckill.service.SeckillStockService#reserve(Long, Long,
      *      String, long, long, long, String, int, int, long)
-     * @see com.voucherx.order.service.OrderPersistenceService#persist
+     * @see com.voucherx.order.service.PurchaseOrderCreationService#createPurchaseOrder
      */
     public SeckillAcceptResponse seckill(Long user, Long voucher, String clientKey) {
         if (clientKey == null || !clientKey.matches("[A-Za-z0-9._:-]{1,64}"))
@@ -90,7 +92,7 @@ public class SeckillService {
         admission.acquireGlobal(voucher);
         RequestRecord r;
         try {
-            r = ledger.intent(user, voucher, clientKey, mode.name(), bucket,
+            r = ledger.createIntent(user, voucher, clientKey, mode.name(), bucket,
                     activity.getLayoutVersion());
         } catch (DuplicateKeyException ex) {
             r = ledger.byKey(user, clientKey);
@@ -118,7 +120,7 @@ public class SeckillService {
         }
         // 发生异常时保留 INTENT 和 Redis 归属证据，扫描可重新完成受理。
         faults.hit(com.voucherx.recovery.FaultPoint.RESERVE_DONE, r.requestId(), r.eventId());
-        ledger.accept(r.requestId());
+        ledger.acceptAndEnqueueEvent(r.requestId());
         faults.hit(com.voucherx.recovery.FaultPoint.ACCEPT_COMMITTED, r.requestId(), r.eventId());
         return new SeckillAcceptResponse(r.requestId(), SeckillRequestStatus.PROCESSING);
     }

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.voucherx.recovery.mapper.RecoveryMapper">
-    <select id="findControl" resultType="com.voucherx.recovery.RecoveryService$Control" useCache="false">
+    <select id="selectByVoucherId" resultType="com.voucherx.recovery.RecoveryService$Control" useCache="false">
         <![CDATA[
         SELECT voucher_id, state, epoch, recovery_id
         FROM tb_activity_control
         WHERE voucher_id=#{voucher}
         ]]>
     </select>
-    <select id="lockControl" resultType="com.voucherx.recovery.RecoveryService$Control" useCache="false">
+    <select id="selectByVoucherIdForUpdate" resultType="com.voucherx.recovery.RecoveryService$Control" useCache="false">
         <![CDATA[
         SELECT voucher_id, state, epoch, recovery_id
         FROM tb_activity_control
@@ -133,7 +133,7 @@
         LIMIT #{limit}
         ]]>
     </select>
-    <update id="releaseClosedRequests">
+    <update id="markClosedReservationsReleased">
         <![CDATA[
         UPDATE tb_seckill_request
         SET reservation='RELEASED', updated_at_ms=#{now}
@@ -142,7 +142,7 @@
         AND reservation='RESERVED'
         ]]>
     </update>
-    <update id="releaseCompensations">
+    <update id="markCompensationsReleased">
         <![CDATA[
         UPDATE tb_compensation c
         JOIN tb_seckill_request r ON c.request_id=r.request_id

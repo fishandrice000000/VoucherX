@@ -44,11 +44,11 @@ public class ActivityGate {
      *
      * @return 控制状态及当前代次；锁持续到调用者事务结束
      */
-    public Control lock(long voucherId) {
+    public Control lockActivityForShare(long voucherId) {
         // 首次建行先普通读取/INSERT IGNORE，避免在不存在行上持共享间隙锁后升级插入。
         if (mapper.count(voucherId) == 0)
             mapper.insertIfAbsent(voucherId);
-        Control control = mapper.lockShared(voucherId);
+        Control control = mapper.selectByVoucherIdForShare(voucherId);
         if (control == null)
             throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, "活动控制记录不可用");
         return control;
@@ -62,8 +62,8 @@ public class ActivityGate {
      *
      * @return 可写入新请求的当前恢复代次
      */
-    public long requireNormal(long voucherId) {
-        Control c = lock(voucherId);
+    public long lockNormalActivityAndGetEpoch(long voucherId) {
+        Control c = lockActivityForShare(voucherId);
         if (!"NORMAL".equals(c.state()))
             throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE, "活动正在恢复，暂不受理");
         return c.epoch();

@@ -10,13 +10,13 @@ import java.nio.file.Path;
 /**
  * 用于库存锁竞争实验的事务内延迟器，默认关闭。
  * <p>
- * OrderPersistenceService 在成功扣减库存之后、插单之前调用 apply，使等待发生在持有库存行锁期间。
+ * PurchaseOrderCreationService 在成功扣减库存之后、插单之前调用 apply，使等待发生在持有库存行锁期间。
  * 它通过本地文件调整延迟，观察数据库变慢时的行为；不会自动评估分桶吞吐或宣告性能验收通过。
  * <p>
  * 开启时以约 100 毫秒间隔缓存文件读数，避免逐单读文件；这是并发下的尽力刷新，不是严格互斥限频。
  *
  * @see ExperimentProperties
- * @see com.voucherx.order.service.OrderPersistenceService#persist
+ * @see com.voucherx.order.service.PurchaseOrderCreationService#createPurchaseOrder
  */
 @Component
 public class TransactionDelay {

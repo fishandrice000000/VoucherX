@@ -49,7 +49,7 @@ public interface CompensationMapper {
      *               原请求 ID
      * @return 进度快照；不存在为 null
      */
-    CompensationRecord lock(@Param("id") String id);
+    CompensationRecord selectByIdForUpdate(@Param("id") String id);
 
     /**
      * 按请求 ID 写入服务层计算的补偿状态、次数和下次执行时间。
@@ -72,7 +72,8 @@ public interface CompensationMapper {
             @Param("next") long next, @Param("now") long now);
 
     /**
-     * 普通查询到期 PENDING 补偿，按 next_at_ms 排序并限制条数；不认领或锁行，execute 还须加锁复核。
+     * 普通查询到期 PENDING 补偿，按 next_at_ms
+     * 排序并限制条数；不认领或锁行，releaseReservationAndRecordResult 还须加锁复核。
      *
      * @param now
      *                  本轮扫描 Unix 毫秒

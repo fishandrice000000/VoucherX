@@ -4,8 +4,8 @@ import com.voucherx.common.api.ErrorCode;
 import com.voucherx.common.exception.BusinessException;
 import com.voucherx.common.redis.RedisKeys;
 import com.voucherx.fulfillment.*;
-import com.voucherx.order.mapper.VoucherOrderMapper;
-import com.voucherx.seckill.service.SeckillRequestStatusStore;
+import com.voucherx.order.mapper.PurchaseOrderEntityMapper;
+import com.voucherx.seckill.service.SeckillRequestStatusCache;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import com.voucherx.fulfillment.mapper.OutboxMapper;
 import org.springframework.stereotype.Service;
@@ -28,7 +28,8 @@ public class ReconciliationService {
     /**
      * 一次诊断时的多源观察结果；不持有锁，不构成执行修复的独立授权。
      * <p>
-     * action 是建议，request/orderId/outboxState 可能在下一次读取时变化；真正修改须经各动作的保护条件。
+     * action 是建议，request/orderId/outboxState
+     * 可能在下一次读取时变化；真正修改须经各动作的保护条件。
      *
      * @param request
      *                               原请求账本快照
@@ -48,9 +49,9 @@ public class ReconciliationService {
     private final OutboxMapper outbox;
     private final RequestLedger ledger;
     private final ActivityGate gate;
-    private final VoucherOrderMapper orders;
+    private final PurchaseOrderEntityMapper orders;
     private final StringRedisTemplate redis;
-    private final SeckillRequestStatusStore statuses;
+    private final SeckillRequestStatusCache statuses;
     private final CompensationService compensation;
     private final RepairAudit audit;
     private final TransactionTemplate tx;
@@ -58,8 +59,8 @@ public class ReconciliationService {
     private final DeliveryProperties delivery;
 
     public ReconciliationService(OutboxMapper outbox, RequestLedger ledger, ActivityGate gate,
-            VoucherOrderMapper orders,
-            StringRedisTemplate redis, SeckillRequestStatusStore statuses, CompensationService compensation,
+            PurchaseOrderEntityMapper orders,
+            StringRedisTemplate redis, SeckillRequestStatusCache statuses, CompensationService compensation,
             RepairAudit audit,
             org.springframework.transaction.PlatformTransactionManager manager, Clock clock,
             DeliveryProperties delivery) {
@@ -117,7 +118,8 @@ public class ReconciliationService {
      * <ul>
      * <li>SYNC_RESULT：尽力同步成功快照，返回 SYNCED。</li>
      * <li>ACCEPT_RESERVATION：提交账本受理；REPLAY_EVENT：通过持锁事务安排同一事件。</li>
-     * <li>RELEASE_RESERVATION：依次提交 prepare 和 execute。</li>
+     * <li>RELEASE_RESERVATION：依次提交 closeRequestAndPrepareCompensation 和
+     * releaseReservationAndRecordResult。</li>
      * <li>WAIT 或 ISOLATE：返回等待或隔离查证结论。</li>
      * </ul>
      * <p>
@@ -127,8 +129,8 @@ public class ReconciliationService {
      * @param id
      *               请求 ID
      * @return 本次动作或保持结论；不能仅按返回标签推断库存实际变化次数
-     * @see CompensationService#prepare
-     * @see CompensationService#execute
+     * @see CompensationService#closeRequestAndPrepareCompensation
+     * @see CompensationService#releaseReservationAndRecordResult
      */
     public String repair(String id) {
         Diagnosis d = diagnose(id);
@@ -141,14 +143,15 @@ public class ReconciliationService {
                 yield "SYNCED";
             }
             case ACCEPT_RESERVATION -> {
-                ledger.accept(id);
+                ledger.acceptAndEnqueueEvent(id);
                 yield "ACCEPTED";
             }
             case RELEASE_RESERVATION -> {
-                compensation.prepare(id, r.reason() == null ? "BUSINESS_FAILED" : r.reason());
-                yield compensation.execute(id);
+                compensation.closeRequestAndPrepareCompensation(id,
+                        r.reason() == null ? "BUSINESS_FAILED" : r.reason());
+                yield compensation.releaseReservationAndRecordResult(id);
             }
-            case REPLAY_EVENT -> replay(r);
+            case REPLAY_EVENT -> scheduleEventRedelivery(r);
             case WAIT -> "WAIT";
             case ISOLATE -> "ISOLATED";
         };
@@ -169,10 +172,10 @@ public class ReconciliationService {
      * @return 事件更新命中标签或状态已变标签
      * @see com.voucherx.fulfillment.mapper.OutboxMapper#scheduleReplay
      */
-    private String replay(RequestRecord before) {
+    private String scheduleEventRedelivery(RequestRecord before) {
         return tx.execute(status -> {
-            long epoch = gate.requireNormal(before.voucherId());
-            var r = ledger.lock(before.requestId());
+            long epoch = gate.lockNormalActivityAndGetEpoch(before.voucherId());
+            var r = ledger.getRequestForUpdate(before.requestId());
             if (epoch != r.epoch() || !"ACCEPTED".equals(r.phase()))
                 return "STATE_CHANGED";
             int changed = outbox.scheduleReplay(r.requestId(), delivery.maxAttempts(), clock.millis());

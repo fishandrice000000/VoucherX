@@ -44,7 +44,7 @@ public class CommerceExpiryJob {
     @Scheduled(fixedDelayString = "${voucherx.commerce.expiry-interval-millis:10000}")
     public void tick() {
         try {
-            for (var kind : CommerceService.Kind.values()) {
+            for (var kind : CommerceService.OrderKind.values()) {
                 var ids = service.expiredOrderIds(kind, clock.millis(), config.scanSize());
                 for (long id : ids)
                     try {

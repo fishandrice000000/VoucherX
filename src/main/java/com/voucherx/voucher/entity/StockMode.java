@@ -6,7 +6,7 @@ package com.voucherx.voucher.entity;
  * {@link #SINGLE} 扣活动表的一行，{@link #BUCKET} 扣桶表的实际命中行。
  * 分桶旨在分散数据库行锁竞争，不等于 Redis 分片，也不代表已经取得可启用的性能收益。
  *
- * @see com.voucherx.order.service.OrderPersistenceService
+ * @see com.voucherx.order.service.PurchaseOrderCreationService
  * @see com.voucherx.config.SeckillProperties
  */
 public enum StockMode {

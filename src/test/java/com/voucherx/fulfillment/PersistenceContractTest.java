@@ -6,7 +6,7 @@ import com.voucherx.commerce.CommerceService;
 import com.voucherx.common.exception.BusinessException;
 import com.voucherx.common.redis.RedisKeys;
 import com.voucherx.fulfillment.mapper.OutboxMapper;
-import com.voucherx.order.service.OrderPersistenceService;
+import com.voucherx.order.service.PurchaseOrderCreationService;
 import com.voucherx.recovery.FaultInjector;
 import com.voucherx.recovery.FaultPoint;
 import com.voucherx.seckill.service.SeckillService;
@@ -41,7 +41,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     @Autowired
     RequestLedger ledger;
     @Autowired
-    OrderPersistenceService orders;
+    PurchaseOrderCreationService orders;
     @Autowired
     CommerceService commerce;
     @Autowired
@@ -69,13 +69,13 @@ class PersistenceContractTest extends AbstractIntegrationTest {
 
     /** 用持久化消息直接调用事务建单服务，取得待付款购买订单 ID。 */
     private long purchase() {
-        return orders.persist(accepted().message()).orderId();
+        return orders.createPurchaseOrder(accepted().message()).orderId();
     }
 
     /** 为购买单模拟成功支付 100 分，返回该用户获得的第一张用户券 ID。 */
     private long issuedCoupon() {
         long id = purchase();
-        commerce.simulate(1, CommerceService.Kind.PURCHASE, id, "purchase-payment", 100, true);
+        commerce.simulatePayment(1, CommerceService.OrderKind.PURCHASE, id, "purchase-payment", 100, true);
         return commerce.coupons(1, 0, 20).getFirst().id();
     }
 
@@ -101,7 +101,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
                 .header("Authorization", "Bearer contract-token")).andExpect(status().isOk()).andReturn();
         assertThat(json.readTree(response.getResponse().getContentAsString()).get("data"))
                 .isEqualTo(databaseJson(jdbcTemplate.queryForMap("SELECT * FROM tb_voucher_order WHERE id=?", id)));
-        commerce.simulate(1, CommerceService.Kind.PURCHASE, id, "pay", 100, true);
+        commerce.simulatePayment(1, CommerceService.OrderKind.PURCHASE, id, "pay", 100, true);
         var coupons = commerce.coupons(1, 0, 20);
         long coupon = coupons.getFirst().id();
         var couponResponse = mockMvc.perform(get("/api/coupons").header("Authorization", "Bearer contract-token"))
@@ -109,7 +109,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         assertThat(json.readTree(couponResponse.getResponse().getContentAsString()).get("data"))
                 .isEqualTo(databaseJson(
                         jdbcTemplate.queryForList("SELECT * FROM tb_user_coupon WHERE user_id=1 ORDER BY id")));
-        long consumption = commerce.consume(1, 1, coupon, 2000);
+        long consumption = commerce.createConsumptionOrder(1, 1, coupon, 2000);
         var consumptionResponse = mockMvc.perform(get("/api/orders/CONSUMPTION/{id}", consumption)
                 .header("Authorization", "Bearer contract-token")).andExpect(status().isOk()).andReturn();
         assertThat(json.readTree(consumptionResponse.getResponse().getContentAsString()).get("data"))
@@ -133,7 +133,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         Callable<Boolean> attempt = () -> {
             start.await(5, TimeUnit.SECONDS);
             try {
-                commerce.consume(1, 1, coupon, 2000);
+                commerce.createConsumptionOrder(1, 1, coupon, 2000);
                 return true;
             } catch (BusinessException ex) {
                 return false;
@@ -150,7 +150,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         assertThat(
                 jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_coupon_action WHERE action='LOCK'", Integer.class))
                 .isEqualTo(1);
-        assertThat(commerce.coupon(coupon, false).lockOrderId()).isEqualTo(
+        assertThat(commerce.getCoupon(coupon).lockOrderId()).isEqualTo(
                 jdbcTemplate.queryForObject("SELECT id FROM tb_consumption_order", Long.class));
     }
 
@@ -163,9 +163,10 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     void paymentFailureRollsBackCouponEventAndOrderStateTogether() {
         long id = purchase();
         faults.arm(FaultPoint.PAYMENT_BEFORE_COMMIT, String.valueOf(id), "payment-rollback", FaultInjector.Action.FAIL);
-        assertThatThrownBy(() -> commerce.simulate(1, CommerceService.Kind.PURCHASE, id, "failed-tx", 100, true))
+        assertThatThrownBy(
+                () -> commerce.simulatePayment(1, CommerceService.OrderKind.PURCHASE, id, "failed-tx", 100, true))
                 .isInstanceOf(FaultInjector.InjectedFault.class);
-        assertThat(commerce.order(CommerceService.Kind.PURCHASE, id, 1, false).paymentStatus())
+        assertThat(commerce.getOrder(CommerceService.OrderKind.PURCHASE, id, 1).paymentStatus())
                 .isEqualTo("PENDING_PAYMENT");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_user_coupon", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_payment_event", Integer.class)).isZero();
@@ -180,8 +181,9 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     void consumptionFailureRollsBackGeneratedOrderAndLockTogether() {
         long coupon = issuedCoupon();
         faults.arm(FaultPoint.COUPON_LOCKED, "*", "lock-rollback", FaultInjector.Action.FAIL);
-        assertThatThrownBy(() -> commerce.consume(1, 1, coupon, 2000)).isInstanceOf(FaultInjector.InjectedFault.class);
-        assertThat(commerce.coupon(coupon, false).state()).isEqualTo("AVAILABLE");
+        assertThatThrownBy(() -> commerce.createConsumptionOrder(1, 1, coupon, 2000))
+                .isInstanceOf(FaultInjector.InjectedFault.class);
+        assertThat(commerce.getCoupon(coupon).state()).isEqualTo("AVAILABLE");
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_consumption_order", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_coupon_action", Integer.class)).isZero();
     }

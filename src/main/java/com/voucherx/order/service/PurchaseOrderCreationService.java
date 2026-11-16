@@ -2,8 +2,8 @@ package com.voucherx.order.service;
 
 import com.voucherx.config.SeckillProperties;
 import com.voucherx.config.TransactionDelay;
-import com.voucherx.order.entity.VoucherOrder;
-import com.voucherx.order.mapper.VoucherOrderMapper;
+import com.voucherx.order.entity.PurchaseOrderEntity;
+import com.voucherx.order.mapper.PurchaseOrderEntityMapper;
 import com.voucherx.seckill.model.SeckillOrderMessage;
 import com.voucherx.voucher.entity.SeckillVoucher;
 import com.voucherx.voucher.entity.StockMode;
@@ -19,21 +19,21 @@ import org.springframework.transaction.annotation.Transactional;
  * SINGLE 扣活动库存行，BUCKET 从消息起始桶开始有界寻找可扣减桶。
  * <p>
  * 正常经 Spring 代理返回仅表示购买订单创建完成，付款发券继续阅读
- * {@link com.voucherx.commerce.CommerceService#simulate}。
+ * {@link com.voucherx.commerce.CommerceService#simulatePayment}。
  */
 @Service
-public class OrderPersistenceService {
+public class PurchaseOrderCreationService {
 
     private final com.voucherx.recovery.FaultInjector faults;
     private final com.voucherx.fulfillment.RequestLedger ledger;
     private final com.voucherx.commerce.CommerceService commerce;
-    private final VoucherOrderMapper orderMapper;
+    private final PurchaseOrderEntityMapper orderMapper;
     private final SeckillVoucherMapper seckillVoucherMapper;
     private final SeckillVoucherBucketMapper bucketMapper;
     private final SeckillProperties properties;
     private final TransactionDelay transactionDelay;
 
-    public OrderPersistenceService(VoucherOrderMapper orderMapper,
+    public PurchaseOrderCreationService(PurchaseOrderEntityMapper orderMapper,
             SeckillVoucherMapper seckillVoucherMapper,
             SeckillVoucherBucketMapper bucketMapper,
             SeckillProperties properties,
@@ -55,28 +55,30 @@ public class OrderPersistenceService {
      * 先取得活动共享锁和请求行锁，核对消息身份；同请求已有订单时返回其 ID，created=false。
      * 首次建单校验用户资格与当前布局，条件扣减 SINGLE 或 BUCKET 库存，插入订单、固定权益快照并将请求记为 SUCCEEDED。
      * <p>
-     * 这些写入共同提交或回滚。completedAtMs 是插单前记录的观测时刻；独立消费者调用的事务代理返回后完成提交，persistBatch
+     * 这些写入共同提交或回滚。completedAtMs
+     * 是插单前记录的观测时刻；独立消费者调用的事务代理返回后完成提交，createPurchaseOrdersInBatch
      * 内调用则共享批事务。
      * 提交后的购买订单为 PENDING_PAYMENT，消费者继续更新结果快照并确认消息。
      *
      * @param message
      *                    身份将由账本守卫再次核对的 MQ 业务消息
      * @return 本次新建或复用的订单 ID 和 created 标志；是否已提交取决于外层事务边界
-     * @see com.voucherx.fulfillment.RequestLedger#guard
+     * @see com.voucherx.fulfillment.RequestLedger#lockAndValidateForOrderCreation
      * @see com.voucherx.commerce.CommerceService#initializePurchase
-     * @see #persistBatch
+     * @see #createPurchaseOrdersInBatch
      */
     @Transactional(rollbackFor = Exception.class)
-    public OrderPersistResult persist(SeckillOrderMessage message) {
-        ledger.guard(message);
+    public PurchaseOrderCreationResult createPurchaseOrder(SeckillOrderMessage message) {
+        ledger.lockAndValidateForOrderCreation(message);
         // 正常重复消费：同一个 requestId 已经成功落库。
-        VoucherOrder existing = orderMapper.selectByRequestId(message.requestId());
+        PurchaseOrderEntity existing = orderMapper.selectByRequestId(message.requestId());
         if (existing != null) {
-            return new OrderPersistResult(existing.getId(), false);
+            return new PurchaseOrderCreationResult(existing.getId(), false);
         }
 
         // 数据库组合唯一约束是最终一人一单保障；这里提前检查，减少无意义的库存扣减。
-        VoucherOrder existingUserOrder = orderMapper.selectByVoucherAndUser(message.voucherId(), message.userId());
+        PurchaseOrderEntity existingUserOrder = orderMapper.selectByVoucherAndUser(message.voucherId(),
+                message.userId());
         if (existingUserOrder != null) {
             throw new OrderBusinessException(OrderFailure.DUPLICATE_USER,
                     "该用户已存在同一活动订单");
@@ -105,7 +107,7 @@ public class OrderPersistenceService {
         // 放大真实锁/提交窗口；默认配置下为空操作。
         transactionDelay.apply();
 
-        VoucherOrder order = new VoucherOrder();
+        PurchaseOrderEntity order = new PurchaseOrderEntity();
         order.setRequestId(message.requestId());
         order.setMessageId(message.messageId());
         order.setUserId(message.userId());
@@ -113,19 +115,19 @@ public class OrderPersistenceService {
         order.setStockMode(activityMode.name());
         order.setBucketNo(actualBucket);
         order.setLayoutVersion(layoutVersion);
-        order.setStatus(VoucherOrder.STATUS_CREATED);
+        order.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         // 事务提交会稍晚于该时间，作为端到端观测的落库近似点。
         order.setCompletedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
         commerce.initializePurchase(order.getId(), message.voucherId());
-        ledger.succeed(message.requestId(), order.getId());
+        ledger.markOrderCreated(message.requestId(), order.getId());
         faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), message.messageId());
-        return new OrderPersistResult(order.getId(), true);
+        return new PurchaseOrderCreationResult(order.getId(), true);
     }
 
     /**
-     * 通过 Spring 代理开启批事务，按消息顺序调用 persist，共同使用该事务的连接和锁。
+     * 通过 Spring 代理开启批事务，按消息顺序调用 createPurchaseOrder，共同使用该事务的连接和锁。
      * <p>
      * 业务 SQL 逐项执行；任一项异常会回滚整批库存、订单及请求结果。
      * 代理成功返回后，消费者逐条确认消息；批事务回滚后，消费者按单条事务处理每项结果。
@@ -136,9 +138,10 @@ public class OrderPersistenceService {
      * @see com.voucherx.mq.consumer.SeckillOrderConsumer
      */
     @Transactional(rollbackFor = Exception.class)
-    public java.util.List<OrderPersistResult> persistBatch(java.util.List<SeckillOrderMessage> messages) {
+    public java.util.List<PurchaseOrderCreationResult> createPurchaseOrdersInBatch(
+            java.util.List<SeckillOrderMessage> messages) {
         // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
-        var results = messages.stream().map(this::persist).toList();
+        var results = messages.stream().map(this::createPurchaseOrder).toList();
         faults.hit(com.voucherx.recovery.FaultPoint.BATCH_BEFORE_COMMIT, messages.getFirst().requestId(),
                 messages.getFirst().messageId());
         return results;

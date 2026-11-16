@@ -96,7 +96,7 @@ public class RecoveryService {
      *                               活动控制记录不存在
      */
     public Control status(long voucher) {
-        Control control = mapper.findControl(voucher);
+        Control control = mapper.selectByVoucherId(voucher);
         if (control == null)
             throw new BusinessException(ErrorCode.NOT_FOUND, "活动控制记录不存在");
         return control;
@@ -204,7 +204,7 @@ public class RecoveryService {
      *                               控制记录不存在
      */
     private Control lock(long voucher) {
-        Control control = mapper.lockControl(voucher);
+        Control control = mapper.selectByVoucherIdForUpdate(voucher);
         if (control == null)
             throw new BusinessException(ErrorCode.NOT_FOUND);
         return control;
@@ -395,8 +395,8 @@ public class RecoveryService {
             throw new IllegalStateException("Redis 恢复发布校验失败: " + result);
         faults.hit(FaultPoint.RECOVERY_PUBLISHED, String.valueOf(c.voucherId()), c.recoveryId());
         // 发布后仍冻结；再次执行只会按同一权威快照覆盖，不做增量加库存。
-        mapper.releaseClosedRequests(c.voucherId(), clock.millis());
-        mapper.releaseCompensations(c.voucherId(), clock.millis());
+        mapper.markClosedReservationsReleased(c.voucherId(), clock.millis());
+        mapper.markCompensationsReleased(c.voucherId(), clock.millis());
         transition(c, "REBUILDING");
         audit.record(null, c.voucherId(), "REBUILD", plan.toString(), "PUBLISHED_FROZEN");
     }

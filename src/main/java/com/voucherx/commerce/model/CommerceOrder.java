@@ -3,7 +3,7 @@ package com.voucherx.commerce.model;
 /**
  * 购买单和消费单共有的付款视图；sealed 限定实现为这两种类型，调用方仍须同时携带订单类型定位。
  */
-public sealed interface CommerceOrder permits PurchaseOrder, ConsumptionOrder {
+public sealed interface CommerceOrder permits PurchaseOrderSnapshot, ConsumptionOrder {
     /**
      * 返回该类型订单的数据库主键。
      *

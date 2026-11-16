@@ -19,7 +19,7 @@
             <arg column="updated_at_ms" javaType="_long"/>
         </constructor>
     </resultMap>
-    <select id="find" resultMap="request" useCache="false">
+    <select id="selectById" resultMap="request" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_seckill_request
@@ -34,7 +34,7 @@
         AND client_key=#{key}
         ]]>
     </select>
-    <select id="lock" resultMap="request" useCache="false">
+    <select id="selectByIdForUpdate" resultMap="request" useCache="false">
         <![CDATA[
         SELECT *
         FROM tb_seckill_request

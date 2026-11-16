@@ -11,5 +11,5 @@ package com.voucherx.order.service;
  * @param created
  *                    本次事务主体是否新插入了购买订单
  */
-public record OrderPersistResult(Long orderId, boolean created) {
+public record PurchaseOrderCreationResult(Long orderId, boolean created) {
 }

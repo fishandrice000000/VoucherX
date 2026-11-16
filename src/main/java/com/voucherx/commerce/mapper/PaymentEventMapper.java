@@ -10,7 +10,7 @@ import com.voucherx.commerce.model.PaymentEvent;
  * 重放时核对类型、订单、用户、金额和 success；订单行锁协调同单操作，事件主键协调跨订单碰撞。
  * 事务和冲突处理由交易服务管理。
  *
- * @see com.voucherx.commerce.CommerceService#simulate
+ * @see com.voucherx.commerce.CommerceService#simulatePayment
  * @see PaymentEvent
  */
 @Mapper
@@ -22,7 +22,7 @@ public interface PaymentEventMapper {
      *               支付事件幂等键
      * @return 原事件快照；不是订单当前状态查询
      */
-    PaymentEvent find(@Param("id") String id);
+    PaymentEvent selectById(@Param("id") String id);
 
     /**
      * 保存本事件的输入、outcome 和当时 orderState；与本次订单变更及发券/核销/关闭共用交易事务。

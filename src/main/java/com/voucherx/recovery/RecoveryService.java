@@ -311,9 +311,9 @@ public class RecoveryService {
             remaining = buckets.sumRemaining(voucher, layout);
         } else
             remaining = activity.getStock();
-        long confirmed = mapper.countConfirmed(voucher);
-        long reserved = mapper.countReserved(voucher);
-        return RecoveryPlan.calculate(activity.getTotalStock(), remaining, confirmed, reserved);
+        long createdOrderCount = mapper.countCreatedOrders(voucher);
+        long acceptedRequestCount = mapper.countAcceptedRequests(voucher);
+        return RecoveryPlan.calculate(activity.getTotalStock(), remaining, createdOrderCount, acceptedRequestCount);
     }
 
     /**
@@ -344,7 +344,7 @@ public class RecoveryService {
         String prefix = "voucherx:recovery:" + c.recoveryId();
         String stageStock = prefix + ":stock", stageUsers = prefix + ":users", stageOwners = prefix + ":owners";
         redis.delete(List.of(stageStock, stageUsers, stageOwners));
-        redis.opsForValue().set(stageStock, String.valueOf(plan.available()));
+        redis.opsForValue().set(stageStock, String.valueOf(plan.availableStock()));
         long after = 0;
         int seen = 0;
         while (true) {
@@ -360,7 +360,7 @@ public class RecoveryService {
                 redis.opsForHash().putAll(RedisKeys.seckillRequest(id),
                         Map.of("requestId", id, "userId", user, "voucherId", String.valueOf(c.voucherId()),
                                 "epoch", String.valueOf(c.epoch()), "status", "SUCCESS", "orderId",
-                                String.valueOf(order.id()), "messageId", order.messageId()));
+                                String.valueOf(order.id()), "eventId", order.eventId()));
                 after = order.id();
             }
         }
@@ -377,7 +377,7 @@ public class RecoveryService {
             };
             Map<String, String> snapshot = new HashMap<>(Map.of("requestId", r.requestId(), "userId",
                     String.valueOf(r.userId()), "voucherId", String.valueOf(r.voucherId()),
-                    "epoch", String.valueOf(c.epoch()), "status", status, "messageId", r.eventId(), "stockMode",
+                    "epoch", String.valueOf(c.epoch()), "status", status, "eventId", r.eventId(), "stockMode",
                     r.stockMode(), "startBucketNo", String.valueOf(r.startBucketNo()), "layoutVersion",
                     String.valueOf(r.layoutVersion())));
             if (r.orderId() != null)
@@ -389,8 +389,8 @@ public class RecoveryService {
                 List.of(RedisKeys.seckillStock(c.voucherId()), RedisKeys.seckillUsers(c.voucherId()),
                         RedisKeys.seckillOwners(c.voucherId()),
                         RedisKeys.seckillGate(c.voucherId()), stageStock, stageUsers, stageOwners),
-                String.valueOf(c.epoch()), c.recoveryId(), String.valueOf(plan.available()),
-                String.valueOf(plan.reserved() + plan.confirmed()));
+                String.valueOf(c.epoch()), c.recoveryId(), String.valueOf(plan.availableStock()),
+                String.valueOf(plan.acceptedRequestCount() + plan.createdOrderCount()));
         if (result == null || result != 1)
             throw new IllegalStateException("Redis 恢复发布校验失败: " + result);
         faults.hit(FaultPoint.RECOVERY_PUBLISHED, String.valueOf(c.voucherId()), c.recoveryId());
@@ -425,11 +425,11 @@ public class RecoveryService {
         var gate = redis.opsForHash().entries(RedisKeys.seckillGate(c.voucherId()));
         if (!String.valueOf(c.epoch()).equals(gate.get("epoch"))
                 || !c.recoveryId().equals(gate.get("publishedRecovery"))
-                || !String.valueOf(plan.available())
+                || !String.valueOf(plan.availableStock())
                         .equals(redis.opsForValue().get(RedisKeys.seckillStock(c.voucherId())))
-                || !Long.valueOf(plan.reserved() + plan.confirmed())
+                || !Long.valueOf(plan.acceptedRequestCount() + plan.createdOrderCount())
                         .equals(redis.opsForSet().size(RedisKeys.seckillUsers(c.voucherId())))
-                || !Long.valueOf(plan.reserved() + plan.confirmed())
+                || !Long.valueOf(plan.acceptedRequestCount() + plan.createdOrderCount())
                         .equals(redis.opsForHash().size(RedisKeys.seckillOwners(c.voucherId()))))
             throw new IllegalStateException("Redis 恢复内容不完整，禁止复流");
         long unmatched = mapper.countUnmatchedEvents(c.voucherId(), c.epoch());

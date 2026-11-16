@@ -284,3 +284,7 @@ bench/            # 压测客户端、数据准备、快照、采样与结果汇
 - 每个独立、可验证的工作单元完成后创建本地提交，使用 Conventional Commits，英文 Type / Scope 配合中文描述。
 - 只提交当前任务相关修改，保护已有工作；不得擅自推送或重写历史。
 - 功能状态以实际代码与验证结果为准，区分已验证、未验证与尚未实现。
+
+### 数据与事件命名
+
+购买订单保存在 `tb_purchase_order`，固定业务事件统一使用 `eventId`（SQL／订单 JSON 为 `event_id`）；插单前观测时间为 `insertStartedAtMs`（SQL／订单 JSON 为 `insert_started_at_ms`）。券模板使用 `purchase_price` 与 `face_value`。运行和压测使用全新数据库表、Redis 状态和消息数据。

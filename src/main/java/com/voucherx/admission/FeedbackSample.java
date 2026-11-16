@@ -7,31 +7,31 @@ package com.voucherx.admission;
  * AIMD 不以这些字段设置独立阈值，也没有最老消息年龄字段。
  *
  * @param windowMillis
- *                                     实际采样间隔，毫秒
+ *                                          实际采样间隔，毫秒
  * @param completedOrders
- *                                     窗口中观察到的新建订单结果数
+ *                                          窗口中观察到的新建订单结果数
  * @param duplicateMessages
- *                                     重复投递复用订单的结果数
+ *                                          重复投递复用订单的结果数
  * @param failures
- *                                     暂时性或基础设施失败数
+ *                                          暂时性或基础设施失败数
  * @param businessFailures
- *                                     明确业务拒绝数，不进入基础设施失败比例
- * @param averageTransactionMillis
- *                                     消费结果观察的平均经过毫秒
+ *                                          明确业务拒绝数，不进入基础设施失败比例
+ * @param averageObservedDurationMillis
+ *                                          消费结果观察的平均经过毫秒
  * @param inFlight
- *                                     当前执行段数，批处理时按批次执行段计
+ *                                          当前执行段数，批处理时按批次执行段计
  * @param maxInFlight
- *                                     上个窗口观察到的执行段峰值
+ *                                          上个窗口观察到的执行段峰值
  * @param queueReady
- *                                     主队列等待交付的消息数，不含所有 unacked 或 Outbox
+ *                                          主队列等待交付的消息数，不含所有 unacked 或 Outbox
  * @param queueMeasured
- *                                     是否成功取得主队列 ready
+ *                                          是否成功取得主队列 ready
  * @param hikariActive
- *                                     已测得的活跃数据库连接数
+ *                                          已测得的活跃数据库连接数
  * @param hikariPending
- *                                     已测得的等待数据库连接线程数
+ *                                          已测得的等待数据库连接线程数
  * @param hikariMeasured
- *                                     是否成功取得池状态，false 不等于实际零等待
+ *                                          是否成功取得池状态，false 不等于实际零等待
  * @see AdaptiveRateController#evaluate
  */
 public record FeedbackSample(
@@ -40,7 +40,7 @@ public record FeedbackSample(
         long duplicateMessages,
         long failures,
         long businessFailures,
-        double averageTransactionMillis,
+        double averageObservedDurationMillis,
         int inFlight,
         int maxInFlight,
         long queueReady,

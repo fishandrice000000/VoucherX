@@ -97,10 +97,10 @@ if [[ -n "$delay_pid" ]]; then wait "$delay_pid" 2>/dev/null || true; fi
 bench/snapshot.sh "$out" after
 bench/final-state.sh "$out" "$voucher_id"
 {
-  echo "request_id,completed_at_ms"
+  echo "request_id,insert_started_at_ms"
   docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL | sed 's/\t/,/'
-SELECT request_id, completed_at_ms
-  FROM tb_voucher_order
+SELECT request_id, insert_started_at_ms
+  FROM tb_purchase_order
  WHERE voucher_id = ${voucher_id};
 SQL
 } > "$out/orders.csv"

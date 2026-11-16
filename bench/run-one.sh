@@ -83,10 +83,10 @@ if [[ -n "$lock_probe_pid" ]]; then wait "$lock_probe_pid" 2>/dev/null || true; 
 bench/snapshot.sh "$out" after
 bench/final-state.sh "$out" "$voucher_id"
 {
-  echo "request_id,completed_at_ms"
+  echo "request_id,insert_started_at_ms"
   docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL | sed 's/\t/,/'
-SELECT request_id, completed_at_ms
-  FROM tb_voucher_order
+SELECT request_id, insert_started_at_ms
+  FROM tb_purchase_order
  WHERE voucher_id = ${voucher_id};
 SQL
 } > "$out/orders.csv"
@@ -94,7 +94,7 @@ measure_start=$(awk -F= '$1=="measure_start_epoch_ms"{print $2}' "$out/summary.t
 measure_end=$(awk -F= '$1=="measure_end_epoch_ms"{print $2}' "$out/summary.txt")
 window_orders=$(docker compose exec -T mysql mysql -uvoucherx -pvoucherx -N "$DB_NAME" 2>/dev/null <<SQL
 SET time_zone = '+08:00';
-SELECT COUNT(*) FROM tb_voucher_order
+SELECT COUNT(*) FROM tb_purchase_order
  WHERE voucher_id = ${voucher_id}
    AND UNIX_TIMESTAMP(create_time) * 1000 >= ${measure_start:-0}
    AND UNIX_TIMESTAMP(create_time) * 1000 < ${measure_end:-0};

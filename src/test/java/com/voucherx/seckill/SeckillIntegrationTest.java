@@ -187,13 +187,13 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
             SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
             assertThat(status.status()).isEqualTo(SeckillRequestStatus.SUCCESS);
             assertThat(status.orderId()).isNotNull();
-            assertThat(status.messageId()).isNotBlank();
+            assertThat(status.eventId()).isNotBlank();
         });
 
         SeckillRequestStatusResponse status = seckillService.queryRequest(1L, accepted.requestId());
         PurchaseOrderEntity committed = orderMapper.selectById(status.orderId());
         assertThat(committed.getRequestId()).isEqualTo(accepted.requestId());
-        assertThat(committed.getCompletedAtMs()).isPositive();
+        assertThat(committed.getInsertStartedAtMs()).isPositive();
         assertThat(seckillVoucherMapper.selectById(VOUCHER_ID).getStock()).isZero();
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
 
@@ -221,7 +221,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         var existing = orderMapper.selectByRequestId(requestId);
 
         SeckillOrderMessage duplicate = new SeckillOrderMessage(
-                existing.getMessageId(), requestId, 1L, VOUCHER_ID,
+                existing.getEventId(), requestId, 1L, VOUCHER_ID,
                 System.currentTimeMillis(), "SINGLE", 0, 1, 1);
         assertThat(publisher.publish(duplicate).name()).isEqualTo("CONFIRMED");
         assertThat(publisher.publish(duplicate).name()).isEqualTo("CONFIRMED");
@@ -292,26 +292,26 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         PurchaseOrderEntity first = new PurchaseOrderEntity();
         first.setRequestId(UUID.randomUUID().toString());
-        first.setMessageId(UUID.randomUUID().toString());
+        first.setEventId(UUID.randomUUID().toString());
         first.setUserId(1L);
         first.setVoucherId(VOUCHER_ID);
         first.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         first.setStockMode("SINGLE");
         first.setBucketNo(0);
         first.setLayoutVersion(1);
-        first.setCompletedAtMs(System.currentTimeMillis());
+        first.setInsertStartedAtMs(System.currentTimeMillis());
         orderMapper.insert(first);
 
         PurchaseOrderEntity duplicate = new PurchaseOrderEntity();
         duplicate.setRequestId(UUID.randomUUID().toString());
-        duplicate.setMessageId(UUID.randomUUID().toString());
+        duplicate.setEventId(UUID.randomUUID().toString());
         duplicate.setUserId(1L);
         duplicate.setVoucherId(VOUCHER_ID);
         duplicate.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         duplicate.setStockMode("SINGLE");
         duplicate.setBucketNo(0);
         duplicate.setLayoutVersion(1);
-        duplicate.setCompletedAtMs(System.currentTimeMillis());
+        duplicate.setInsertStartedAtMs(System.currentTimeMillis());
 
         assertThatThrownBy(() -> orderMapper.insert(duplicate))
                 .isInstanceOf(DuplicateKeyException.class);
@@ -332,6 +332,8 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         }
         statusStore.markSuccess("terminal-1", "event-1", 123L);
         statusStore.markFailed("terminal-1", "late", "LATE");
+        assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest("terminal-1"), "eventId"))
+                .isEqualTo("event-1");
         assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest("terminal-1"), "status"))
                 .isEqualTo("SUCCESS");
         statusStore.markFailed("terminal-2", "event-2", "FAILED");
@@ -390,7 +392,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(bucketMapper.sumRemaining(VOUCHER_ID, 1)).isZero();
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
         Integer usedBuckets = jdbcTemplate.queryForObject("""
-                SELECT COUNT(DISTINCT bucket_no) FROM tb_voucher_order
+                SELECT COUNT(DISTINCT bucket_no) FROM tb_purchase_order
                  WHERE voucher_id = ? AND stock_mode = 'BUCKET'
                 """, Integer.class, VOUCHER_ID);
         assertThat(usedBuckets).isEqualTo(5);
@@ -410,9 +412,9 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
 
         redisTemplate.delete(RedisKeys.seckillStock(VOUCHER_ID));
         jdbcTemplate.update("""
-                INSERT INTO tb_voucher_order
-                    (request_id, message_id, user_id, voucher_id, stock_mode,
-                     bucket_no, layout_version, status, completed_at_ms)
+                INSERT INTO tb_purchase_order
+                    (request_id, event_id, user_id, voucher_id, stock_mode,
+                     bucket_no, layout_version, status, insert_started_at_ms)
                 VALUES (?, ?, ?, ?, 'BUCKET', 0, 1, 1, 100)
                 """, UUID.randomUUID().toString(), UUID.randomUUID().toString(),
                 1L, VOUCHER_ID);
@@ -555,7 +557,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         PurchaseOrderEntity order = orderMapper.selectByRequestId(accepted.requestId());
 
         SeckillOrderMessage duplicate = new SeckillOrderMessage(
-                order.getMessageId(), accepted.requestId(), 4L, VOUCHER_ID,
+                order.getEventId(), accepted.requestId(), 4L, VOUCHER_ID,
                 System.currentTimeMillis(), "BUCKET", 0, 1, 1);
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
         assertThat(publisher.publish(duplicate)).isEqualTo(com.voucherx.mq.publisher.PublishResult.CONFIRMED);
@@ -626,7 +628,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         Integer duplicateUsers = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM (
                     SELECT user_id, voucher_id, COUNT(*) AS c
-                      FROM tb_voucher_order
+                      FROM tb_purchase_order
                      WHERE voucher_id = ?
                      GROUP BY user_id, voucher_id
                     HAVING c > 1
@@ -717,13 +719,13 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
         assertThat(stockService.stock(VOUCHER_ID)).isZero();
 
         Integer distinctUsers = jdbcTemplate.queryForObject(
-                "SELECT COUNT(DISTINCT user_id) FROM tb_voucher_order WHERE voucher_id = ?",
+                "SELECT COUNT(DISTINCT user_id) FROM tb_purchase_order WHERE voucher_id = ?",
                 Integer.class, VOUCHER_ID);
         assertThat(distinctUsers).isEqualTo(stock);
         Integer duplicateUsers = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM (
                     SELECT user_id, voucher_id, COUNT(*) AS c
-                      FROM tb_voucher_order
+                      FROM tb_purchase_order
                      WHERE voucher_id = ?
                      GROUP BY user_id, voucher_id
                     HAVING c > 1
@@ -738,7 +740,7 @@ class SeckillIntegrationTest extends AbstractIntegrationTest {
                 "SELECT stock FROM tb_seckill_voucher WHERE voucher_id = ?",
                 Integer.class, VOUCHER_ID);
         Integer orders = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = ?",
+                "SELECT COUNT(*) FROM tb_purchase_order WHERE voucher_id = ?",
                 Integer.class, VOUCHER_ID);
         assertThat(remaining).isNotNegative();
         assertThat(total).isEqualTo(remaining + orders);

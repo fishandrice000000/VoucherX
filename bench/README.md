@@ -84,7 +84,7 @@ run-one.sh <run-id> <voucher-id> <rate> <warmup> <duration> <concurrency> <sampl
 
 - `rate=0` 使用固定并发闭环；正式对照使用开环正数速率。
 - `concurrency` 是压测端并发虚拟线程数，不是应用消费者并发。
-- `sample-status` 是旧版状态轮询采样数量；正式对照建议设为 `0`，使用 `accepted_requests.csv` 与数据库 `completed_at_ms` 计算全部受理请求的 e2e。
+- `sample-status` 是旧版状态轮询采样数量；正式对照建议设为 `0`，使用 `accepted_requests.csv` 与数据库 `insert_started_at_ms` 计算全部受理请求的 e2e。
 - `TOKENS_FILE` 环境变量可指定倾斜流量 Token 文件；`TOKEN_OFFSET` 指定起始下标。
 - `LOCK_PROBE=1` 才启动低频锁探测；默认关闭，避免干扰吞吐。
 - 原始数据写入 `tmp/01/<run-id>/`，被 `.gitignore` 忽略。
@@ -133,3 +133,7 @@ SET GLOBAL sync_binlog = 0;
 - 不启动/停止用户已有容器；Compose 使用本项目容器名。
 - 压测端与应用/中间件同机运行，结果只用于相对比较，不是生产容量承诺。
 - `tmp/` 中的原始数据、日志和容器数据不提交 Git。
+
+## 观测字段与统计口径
+
+`orders.csv` 使用 `request_id,insert_started_at_ms`，数据来自 `tb_purchase_order`。`insert_started_at_ms` 在插单前采样；基于它计算的 e2e 指标是从请求开始到插单前的近似延迟。事务提交与消费者 ACK 在采样之后完成。新实验使用新表和新数据，统计脚本读取当前 CSV 格式。

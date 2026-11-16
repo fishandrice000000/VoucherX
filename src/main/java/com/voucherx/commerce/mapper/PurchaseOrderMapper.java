@@ -7,7 +7,7 @@ import com.voucherx.commerce.model.PurchaseOrderSnapshot;
 import com.voucherx.commerce.model.VoucherTerms;
 
 /**
- * 购买订单交易视图，对 tb_voucher_order 的付款字段和权益快照进行类型化访问。
+ * 购买订单交易视图，对 tb_purchase_order 的付款字段和权益快照进行类型化访问。
  * <p>
  * SQL 位于同名 XML；Mapper 不自行开启业务事务。返回更新行数的方法仅描述写入结果，调用者负责所需的状态检查和行锁。
  */

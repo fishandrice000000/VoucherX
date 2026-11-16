@@ -42,7 +42,7 @@ def main(out_dir):
     orders = {}
     with open(out / "orders.csv", newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            orders[row["request_id"]] = int(row["completed_at_ms"])
+            orders[row["request_id"]] = int(row["insert_started_at_ms"])
 
     accepted_by_phase = defaultdict(list)
     with open(out / "accepted_requests.csv", newline="", encoding="utf-8") as f:
@@ -63,11 +63,11 @@ def main(out_dir):
         e2e = []
         missing = 0
         for request_id, start in accepted_by_phase.get(name, []):
-            completed = orders.get(request_id)
-            if completed is None or completed <= 0:
+            insert_started = orders.get(request_id)
+            if insert_started is None or insert_started <= 0:
                 missing += 1
             else:
-                e2e.append(completed - start)
+                e2e.append(insert_started - start)
         result.append({
             "phase": name,
             "target_rate": row["target_rate"],
@@ -77,6 +77,7 @@ def main(out_dir):
             "skipped": row["skipped"],
             "http_p99_ms": row["http_p99_all_ms"],
             "e2e_samples": len(e2e),
+            "e2e_endpoint": "insert_started_at_ms",
             "e2e_missing": missing,
             "e2e_p50_ms": percentile(e2e, 50),
             "e2e_p95_ms": percentile(e2e, 95),

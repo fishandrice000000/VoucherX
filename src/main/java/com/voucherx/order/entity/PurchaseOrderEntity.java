@@ -7,13 +7,13 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
- * 秒杀建单时写入的基础购买订单实体；映射 tb_voucher_order，ID 由数据库自增并由 MyBatis-Plus 回填。
+ * 秒杀建单时写入的基础购买订单实体；映射 tb_purchase_order，ID 由数据库自增并由 MyBatis-Plus 回填。
  * <p>
  * 这里只表达请求、库存布局及建单状态；付款状态和权益快照的完整读取模型是 PurchaseOrderSnapshot。
  *
  * @see com.voucherx.commerce.model.PurchaseOrderSnapshot
  */
-@TableName("tb_voucher_order")
+@TableName("tb_purchase_order")
 public class PurchaseOrderEntity {
 
     /**
@@ -33,7 +33,7 @@ public class PurchaseOrderEntity {
     /**
      * 固定事件 ID，对应 Outbox.eventId。
      */
-    private String messageId;
+    private String eventId;
     /**
      * 买券用户 ID。
      */
@@ -61,7 +61,7 @@ public class PurchaseOrderEntity {
     /**
      * 插单前记录的近似落库 Unix 毫秒，略早于事务真正提交。
      */
-    private Long completedAtMs;
+    private Long insertStartedAtMs;
     /**
      * 数据库创建时间。
      */
@@ -87,12 +87,12 @@ public class PurchaseOrderEntity {
         this.requestId = requestId;
     }
 
-    public String getMessageId() {
-        return messageId;
+    public String getEventId() {
+        return eventId;
     }
 
-    public void setMessageId(String messageId) {
-        this.messageId = messageId;
+    public void setEventId(String eventId) {
+        this.eventId = eventId;
     }
 
     public Long getUserId() {
@@ -143,12 +143,12 @@ public class PurchaseOrderEntity {
         this.status = status;
     }
 
-    public Long getCompletedAtMs() {
-        return completedAtMs;
+    public Long getInsertStartedAtMs() {
+        return insertStartedAtMs;
     }
 
-    public void setCompletedAtMs(Long completedAtMs) {
-        this.completedAtMs = completedAtMs;
+    public void setInsertStartedAtMs(Long insertStartedAtMs) {
+        this.insertStartedAtMs = insertStartedAtMs;
     }
 
     public LocalDateTime getCreateTime() {

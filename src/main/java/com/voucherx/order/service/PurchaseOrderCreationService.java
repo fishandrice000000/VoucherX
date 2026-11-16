@@ -55,7 +55,7 @@ public class PurchaseOrderCreationService {
      * 先取得活动共享锁和请求行锁，核对消息身份；同请求已有订单时返回其 ID，created=false。
      * 首次建单校验用户资格与当前布局，条件扣减 SINGLE 或 BUCKET 库存，插入订单、固定权益快照并将请求记为 SUCCEEDED。
      * <p>
-     * 这些写入共同提交或回滚。completedAtMs
+     * 这些写入共同提交或回滚。insertStartedAtMs
      * 是插单前记录的观测时刻；独立消费者调用的事务代理返回后完成提交，createPurchaseOrdersInBatch
      * 内调用则共享批事务。
      * 提交后的购买订单为 PENDING_PAYMENT，消费者继续更新结果快照并确认消息。
@@ -109,7 +109,7 @@ public class PurchaseOrderCreationService {
 
         PurchaseOrderEntity order = new PurchaseOrderEntity();
         order.setRequestId(message.requestId());
-        order.setMessageId(message.messageId());
+        order.setEventId(message.eventId());
         order.setUserId(message.userId());
         order.setVoucherId(message.voucherId());
         order.setStockMode(activityMode.name());
@@ -117,12 +117,12 @@ public class PurchaseOrderCreationService {
         order.setLayoutVersion(layoutVersion);
         order.setStatus(PurchaseOrderEntity.STATUS_CREATED);
         // 事务提交会稍晚于该时间，作为端到端观测的落库近似点。
-        order.setCompletedAtMs(System.currentTimeMillis());
+        order.setInsertStartedAtMs(System.currentTimeMillis());
         // 唯一约束冲突会抛出 DuplicateKeyException，使整个事务（含库存扣减）回滚。
         orderMapper.insert(order);
         commerce.initializePurchase(order.getId(), message.voucherId());
         ledger.markOrderCreated(message.requestId(), order.getId());
-        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), message.messageId());
+        faults.hit(com.voucherx.recovery.FaultPoint.ORDER_BEFORE_COMMIT, message.requestId(), message.eventId());
         return new PurchaseOrderCreationResult(order.getId(), true);
     }
 
@@ -143,7 +143,7 @@ public class PurchaseOrderCreationService {
         // 有界批次共用一个事务；任一失败由调用方在回滚后拆分为逐条处理。
         var results = messages.stream().map(this::createPurchaseOrder).toList();
         faults.hit(com.voucherx.recovery.FaultPoint.BATCH_BEFORE_COMMIT, messages.getFirst().requestId(),
-                messages.getFirst().messageId());
+                messages.getFirst().eventId());
         return results;
     }
 

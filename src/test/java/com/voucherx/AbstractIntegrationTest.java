@@ -86,7 +86,7 @@ public abstract class AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM tb_outbox");
         jdbcTemplate.update("DELETE FROM tb_seckill_request");
         jdbcTemplate.update("DELETE FROM tb_activity_control");
-        jdbcTemplate.update("DELETE FROM tb_voucher_order");
+        jdbcTemplate.update("DELETE FROM tb_purchase_order");
         jdbcTemplate.update("DELETE FROM tb_seckill_voucher_bucket");
         jdbcTemplate.update("DELETE FROM tb_seckill_voucher");
         jdbcTemplate.update("DELETE FROM tb_voucher");
@@ -152,7 +152,7 @@ public abstract class AbstractIntegrationTest {
             java.time.LocalDateTime begin, java.time.LocalDateTime end) {
         jdbcTemplate.update("""
                 INSERT INTO tb_voucher
-                    (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+                    (id, shop_id, title, sub_title, rules, purchase_price, face_value, type, status)
                 VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
                 """,
                 voucherId, "测试秒杀券-" + voucherId);
@@ -188,7 +188,7 @@ public abstract class AbstractIntegrationTest {
             java.time.LocalDateTime begin, java.time.LocalDateTime end) {
         jdbcTemplate.update("""
                 INSERT INTO tb_voucher
-                    (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+                    (id, shop_id, title, sub_title, rules, purchase_price, face_value, type, status)
                 VALUES (?, 1, ?, '', '', 100, 1000, 1, 1)
                 """,
                 voucherId, "测试分桶秒杀券-" + voucherId);

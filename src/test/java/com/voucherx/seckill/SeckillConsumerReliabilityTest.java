@@ -67,7 +67,7 @@ class SeckillConsumerReliabilityTest extends AbstractIntegrationTest {
                     .entries(com.voucherx.common.redis.RedisKeys.seckillRequest(accepted.requestId())).get("status"))
                     .isEqualTo(SeckillRequestStatus.SUCCESS.name());
             Integer orders = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = ?",
+                    "SELECT COUNT(*) FROM tb_purchase_order WHERE voucher_id = ?",
                     Integer.class, VOUCHER_ID);
             assertThat(orders).isEqualTo(1);
         });

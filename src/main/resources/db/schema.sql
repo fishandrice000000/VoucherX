@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS tb_voucher (
     title        VARCHAR(128) NOT NULL COMMENT '标题',
     sub_title    VARCHAR(255) NOT NULL DEFAULT '' COMMENT '副标题',
     rules        VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '使用规则',
-    pay_value    BIGINT       NOT NULL DEFAULT 0 COMMENT '支付金额，单位分',
-    actual_value BIGINT       NOT NULL DEFAULT 0 COMMENT '抵扣金额，单位分',
+    purchase_price    BIGINT       NOT NULL DEFAULT 0 COMMENT '支付金额，单位分',
+    face_value BIGINT       NOT NULL DEFAULT 0 COMMENT '抵扣金额，单位分',
     type         TINYINT      NOT NULL DEFAULT 0 COMMENT '0 普通券，1 秒杀券',
     status       TINYINT      NOT NULL DEFAULT 1 COMMENT '1 上架，0 下架',
     create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -77,17 +77,17 @@ CREATE TABLE IF NOT EXISTS tb_seckill_voucher_bucket (
     CONSTRAINT chk_bucket_stock CHECK (remaining_stock >= 0 AND remaining_stock <= total_stock)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '秒杀 MySQL 库存桶';
 
-CREATE TABLE IF NOT EXISTS tb_voucher_order (
+CREATE TABLE IF NOT EXISTS tb_purchase_order (
     id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '订单 ID',
     request_id  VARCHAR(36) NOT NULL COMMENT '一次秒杀请求 ID，用于幂等与状态追踪',
-    message_id     VARCHAR(36) NOT NULL COMMENT 'RabbitMQ 消息 ID，用于链路追踪',
+    event_id     VARCHAR(36) NOT NULL COMMENT '固定业务事件 ID，对应 Outbox 事件',
     user_id        BIGINT      NOT NULL COMMENT '用户 ID',
     voucher_id     BIGINT      NOT NULL COMMENT '优惠券 ID',
     stock_mode     VARCHAR(16) NOT NULL COMMENT '下单时库存模式',
     bucket_no      INT         NOT NULL COMMENT '实际扣减的 MySQL 桶编号',
     layout_version INT         NOT NULL COMMENT '下单时库存布局版本',
     status         TINYINT     NOT NULL DEFAULT 1 COMMENT '1 已创建',
-    completed_at_ms BIGINT     NOT NULL COMMENT '订单落库完成时间，应用毫秒时间戳，用于端到端追踪',
+    insert_started_at_ms BIGINT     NOT NULL COMMENT '插单前采样时间，Unix 毫秒，用于近似端到端观测',
     create_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     payment_status VARCHAR(24) NOT NULL DEFAULT 'PENDING_PAYMENT',
@@ -99,11 +99,11 @@ CREATE TABLE IF NOT EXISTS tb_voucher_order (
     payment_deadline_ms BIGINT NOT NULL DEFAULT 0,
     KEY idx_purchase_expiry(payment_status,payment_deadline_ms),
     PRIMARY KEY (id),
-    UNIQUE KEY uk_order_request (request_id),
-    UNIQUE KEY uk_order_voucher_user (voucher_id, user_id),
-    KEY idx_order_message (message_id),
-    KEY idx_order_user_time (user_id, create_time)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '秒杀订单';
+    UNIQUE KEY uk_purchase_request (request_id),
+    UNIQUE KEY uk_purchase_voucher_user (voucher_id, user_id),
+    KEY idx_purchase_event (event_id),
+    KEY idx_purchase_user_time (user_id, create_time)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '购买订单';
 
 -- 持久化受理和 Outbox。
 CREATE TABLE IF NOT EXISTS tb_activity_control (
@@ -240,9 +240,9 @@ CREATE TABLE IF NOT EXISTS tb_recovery_run (
     voucher_id BIGINT NOT NULL,
     epoch BIGINT NOT NULL,
     state VARCHAR(24) NOT NULL,
-    available BIGINT,
-    reserved BIGINT,
-    confirmed BIGINT,
+    available_stock BIGINT,
+    accepted_request_count BIGINT,
+    created_order_count BIGINT,
     created_at_ms BIGINT NOT NULL,
     updated_at_ms BIGINT NOT NULL,
     UNIQUE KEY uk_recovery_epoch(voucher_id,epoch)

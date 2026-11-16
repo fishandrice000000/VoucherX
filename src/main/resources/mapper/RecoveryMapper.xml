@@ -44,7 +44,7 @@
     <select id="countMatchingOrders" resultType="long" useCache="false">
         <![CDATA[
         SELECT COUNT(*)
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE request_id=#{request}
         AND voucher_id=#{voucher}
         AND user_id=#{user}
@@ -91,7 +91,7 @@
         <![CDATA[
         SELECT COUNT(*)
         FROM tb_seckill_request r
-        JOIN tb_voucher_order o ON r.voucher_id=o.voucher_id
+        JOIN tb_purchase_order o ON r.voucher_id=o.voucher_id
         AND r.user_id=o.user_id
         WHERE r.voucher_id=#{voucher}
         AND r.phase='ACCEPTED'
@@ -100,22 +100,22 @@
     <update id="savePlan">
         <![CDATA[
         UPDATE tb_recovery_run
-        SET available=#{plan.available},
-            reserved=#{plan.reserved},
-            confirmed=#{plan.confirmed},
+        SET available_stock=#{plan.availableStock},
+            accepted_request_count=#{plan.acceptedRequestCount},
+            created_order_count=#{plan.createdOrderCount},
             state='RECONCILING',
             updated_at_ms=#{now}
         WHERE recovery_id=#{id}
         ]]>
     </update>
-    <select id="countConfirmed" resultType="long" useCache="false">
+    <select id="countCreatedOrders" resultType="long" useCache="false">
         <![CDATA[
         SELECT COUNT(*)
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE voucher_id=#{voucher}
         ]]>
     </select>
-    <select id="countReserved" resultType="long" useCache="false">
+    <select id="countAcceptedRequests" resultType="long" useCache="false">
         <![CDATA[
         SELECT COUNT(*)
         FROM tb_seckill_request
@@ -125,8 +125,8 @@
     </select>
     <select id="pageOrders" resultType="com.voucherx.recovery.RecoveredOrder" useCache="false">
         <![CDATA[
-        SELECT id, user_id, request_id, message_id
-        FROM tb_voucher_order
+        SELECT id, user_id, request_id, event_id
+        FROM tb_purchase_order
         WHERE voucher_id=#{voucher}
         AND id>#{after}
         ORDER BY id
@@ -181,7 +181,7 @@
     </update>
     <select id="savedPlan" resultType="com.voucherx.recovery.RecoveryPlan" useCache="false">
         <![CDATA[
-        SELECT available, reserved, confirmed
+        SELECT available_stock, accepted_request_count, created_order_count
         FROM tb_recovery_run
         WHERE recovery_id=#{id}
         ]]>

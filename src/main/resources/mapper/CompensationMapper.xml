@@ -4,7 +4,7 @@
     <select id="countOrders" resultType="long" useCache="false">
         <![CDATA[
         SELECT COUNT(*)
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE request_id=#{id}
         ]]>
     </select>

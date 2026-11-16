@@ -79,8 +79,8 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
         assertThatThrownBy(() -> service.seckill(1L, 1L, null)).isInstanceOfSatisfying(BusinessException.class,
                 ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.INVALID_PARAM));
         jdbcTemplate.update("""
-                INSERT INTO tb_voucher_order
-                (request_id,message_id,user_id,voucher_id,stock_mode,bucket_no,layout_version,completed_at_ms)
+                INSERT INTO tb_purchase_order
+                (request_id,event_id,user_id,voucher_id,stock_mode,bucket_no,layout_version,insert_started_at_ms)
                 VALUES ('orphan','event',1,1,'SINGLE',0,1,100)
                 """);
         assertThatThrownBy(() -> service.queryRequest(1L, "orphan")).isInstanceOfSatisfying(BusinessException.class,
@@ -115,7 +115,7 @@ class CurrentContractIntegrationTest extends AbstractIntegrationTest {
         redisTemplate.opsForHash().putAll(RedisKeys.seckillGate(1L), Map.of("state", "NORMAL", "epoch", "2"));
         assertThat(initializer.initializeSafely(1L)).isFalse();
         assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillGate(1L), "epoch")).isEqualTo("2");
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_voucher_order", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_purchase_order", Long.class)).isZero();
     }
 
     /** 冻结事务持有控制行锁期间启动初始化，初始化必须等待并读取已提交的冻结状态。 */

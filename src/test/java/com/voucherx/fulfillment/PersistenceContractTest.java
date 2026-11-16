@@ -87,8 +87,7 @@ class PersistenceContractTest extends AbstractIntegrationTest {
     /**
      * 通过真实 HTTP 查询购买单、用户券及消费单，将响应 data 与独立数据库 Map 序列化的 JSON 树逐项比较。
      * <p>
-     * 覆盖 snake_case 字段、金额、时间和空锁字段等当前响应契约，证明类型化模型没有顺手改变这组接口 JSON。
-     * 这不验证所有请求/错误响应，也不是付款取消并发测试。
+     * 核对当前 snake_case 字段、事件身份、插单前采样时间、金额与空锁字段。
      *
      * @throws Exception
      *                       HTTP 测试或 JSON 转换失败
@@ -100,7 +99,16 @@ class PersistenceContractTest extends AbstractIntegrationTest {
         var response = mockMvc.perform(get("/api/orders/PURCHASE/{id}", id)
                 .header("Authorization", "Bearer contract-token")).andExpect(status().isOk()).andReturn();
         assertThat(json.readTree(response.getResponse().getContentAsString()).get("data"))
-                .isEqualTo(databaseJson(jdbcTemplate.queryForMap("SELECT * FROM tb_voucher_order WHERE id=?", id)));
+                .isEqualTo(databaseJson(jdbcTemplate.queryForMap("SELECT * FROM tb_purchase_order WHERE id=?", id)));
+        var purchaseData = json.readTree(response.getResponse().getContentAsString()).get("data");
+        assertThat(purchaseData.get("event_id").asText()).isNotBlank();
+        assertThat(purchaseData.get("insert_started_at_ms").asLong()).isPositive();
+        var requestId = purchaseData.get("request_id").asText();
+        var requestResponse = mockMvc.perform(get("/api/seckill/requests/{id}", requestId)
+                .header("Authorization", "Bearer contract-token")).andExpect(status().isOk()).andReturn();
+        assertThat(
+                json.readTree(requestResponse.getResponse().getContentAsString()).get("data").get("eventId").asText())
+                .isEqualTo(purchaseData.get("event_id").asText());
         commerce.simulatePayment(1, CommerceService.OrderKind.PURCHASE, id, "pay", 100, true);
         var coupons = commerce.coupons(1, 0, 20);
         long coupon = coupons.getFirst().id();

@@ -8,7 +8,7 @@ INSERT INTO tb_shop (id, name, type_id, images, area, address, avg_price, sold, 
 VALUES (1, 'VoucherX 演示茶餐厅', 1, '/imgs/shop-1.jpg', '中心商圈', '示例路 1 号', 6800, 1200, 356, 47, '10:00-22:00')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
-INSERT INTO tb_voucher (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+INSERT INTO tb_voucher (id, shop_id, title, sub_title, rules, purchase_price, face_value, type, status)
 VALUES (1, 1, '100 元秒杀代金券', '限量 100 张', '每用户限购 1 张，仅限演示使用', 1000, 10000, 1, 1)
 ON DUPLICATE KEY UPDATE title = VALUES(title);
 

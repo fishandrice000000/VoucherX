@@ -102,7 +102,7 @@ public class AdmissionFeedbackCollector {
         }
 
         return new FeedbackSample(windowMillis, window.completed(), window.duplicates(),
-                window.failures(), window.businessFailures(), window.averageTransactionMillis(),
+                window.failures(), window.businessFailures(), window.averageObservedDurationMillis(),
                 window.inFlight(), window.maxInFlight(), ready, queueMeasured,
                 active, pending, hikariMeasured);
     }

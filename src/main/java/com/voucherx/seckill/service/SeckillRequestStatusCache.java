@@ -37,13 +37,13 @@ public class SeckillRequestStatusCache {
      *
      * @param requestId
      *                      抢券请求 ID
-     * @param messageId
+     * @param eventId
      *                      固定业务事件 ID
      * @param orderId
      *                      已提交的购买订单 ID
      */
-    public void markSuccess(String requestId, String messageId, Long orderId) {
-        update(requestId, SeckillRequestStatus.SUCCESS, messageId, orderId, null);
+    public void markSuccess(String requestId, String eventId, Long orderId) {
+        update(requestId, SeckillRequestStatus.SUCCESS, eventId, orderId, null);
     }
 
     /**
@@ -51,13 +51,13 @@ public class SeckillRequestStatusCache {
      *
      * @param requestId
      *                      抢券请求 ID
-     * @param messageId
+     * @param eventId
      *                      固定业务事件 ID
      * @param reason
      *                      已确定的业务拒绝原因
      */
-    public void markFailed(String requestId, String messageId, String reason) {
-        update(requestId, SeckillRequestStatus.FAILED, messageId, null, reason);
+    public void markFailed(String requestId, String eventId, String reason) {
+        update(requestId, SeckillRequestStatus.FAILED, eventId, null, reason);
     }
 
     /**
@@ -67,21 +67,21 @@ public class SeckillRequestStatusCache {
      *                      抢券请求 ID
      * @param status
      *                      期望记录的状态
-     * @param messageId
+     * @param eventId
      *                      业务事件 ID，可空
      * @param orderId
      *                      购买订单 ID，可空
      * @param reason
      *                      诊断原因，可空
      */
-    private void update(String requestId, SeckillRequestStatus status, String messageId,
+    private void update(String requestId, SeckillRequestStatus status, String eventId,
             Long orderId, String reason) {
         try {
             redisTemplate.execute(
                     statusScript,
                     List.of(RedisKeys.seckillRequest(requestId)),
                     status.name(),
-                    messageId == null ? "" : messageId,
+                    eventId == null ? "" : eventId,
                     orderId == null ? "" : String.valueOf(orderId),
                     reason == null ? "" : reason);
         } catch (DataAccessException ex) {

@@ -96,7 +96,7 @@ public class CommerceService {
         var terms = purchases.terms(voucherId);
         if (terms == null)
             throw new org.springframework.dao.EmptyResultDataAccessException(1);
-        if (terms.payValue() < 0 || terms.actualValue() <= 0 || terms.minSpend() < 0
+        if (terms.purchasePrice() < 0 || terms.faceValue() <= 0 || terms.minSpend() < 0
                 || terms.validitySeconds() < 1 || terms.validitySeconds() > 315360000L)
             throw new BusinessException(ErrorCode.INVALID_PARAM, "优惠券金额或有效期配置不合法");
         purchases.initialize(orderId, terms, clock.millis() + config.paymentTimeoutMillis());

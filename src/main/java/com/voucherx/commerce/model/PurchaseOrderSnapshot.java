@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
 /**
- * 购买单的完整交易视图，与基础建单实体 PurchaseOrderEntity 读取同一张 tb_voucher_order。
+ * 购买单的完整交易视图，与基础建单实体 PurchaseOrderEntity 读取同一张 tb_purchase_order。
  * <p>
  * 付款及权益字段在建单时固定，购买付款按这些快照生成用户券；JSON 使用 snake_case。
  * 整数 status 是基础建单状态，字符串 paymentStatus 才是当前付款状态。
@@ -16,7 +16,7 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  *                                  购买订单主键
  * @param requestId
  *                                  抢券请求 ID
- * @param messageId
+ * @param eventId
  *                                  固定 Outbox 事件 ID
  * @param userId
  *                                  买券用户 ID
@@ -30,7 +30,7 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  *                                  建单时的库存布局版本
  * @param status
  *                                  基础建单状态，创建成功为 1
- * @param completedAtMs
+ * @param insertStartedAtMs
  *                                  插单前记录的近似落库 Unix 毫秒，不是精确提交时刻
  * @param createTime
  *                                  数据库创建时间
@@ -52,9 +52,9 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
  *                                  购买付款截止 Unix 毫秒
  */
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-public record PurchaseOrderSnapshot(long id, String requestId, String messageId, long userId, long voucherId,
+public record PurchaseOrderSnapshot(long id, String requestId, String eventId, long userId, long voucherId,
         String stockMode,
-        int bucketNo, int layoutVersion, int status, long completedAtMs, java.time.LocalDateTime createTime,
+        int bucketNo, int layoutVersion, int status, long insertStartedAtMs, java.time.LocalDateTime createTime,
         java.time.LocalDateTime updateTime, String paymentStatus, long payAmount, long couponFaceValue,
         long couponShopId,
         long couponMinSpend, long couponValiditySeconds, long paymentDeadlineMs) implements CommerceOrder {

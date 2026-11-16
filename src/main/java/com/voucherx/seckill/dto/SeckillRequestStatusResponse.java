@@ -13,7 +13,7 @@ import com.voucherx.seckill.model.SeckillRequestStatus;
  *                      当前请求状态
  * @param orderId
  *                      建单成功时的购买订单 ID，否则可空
- * @param messageId
+ * @param eventId
  *                      对应的固定事件 ID
  * @param reason
  *                      关闭或诊断原因，可空
@@ -22,6 +22,6 @@ public record SeckillRequestStatusResponse(
         String requestId,
         SeckillRequestStatus status,
         Long orderId,
-        String messageId,
+        String eventId,
         String reason) {
 }

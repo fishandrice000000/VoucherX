@@ -34,7 +34,7 @@ class CompletionMetricsTest {
         assertThat(window.failures()).isEqualTo(1);
         assertThat(window.duplicates()).isZero();
         assertThat(window.inFlight()).isZero();
-        assertThat(window.averageTransactionMillis()).isGreaterThanOrEqualTo(0);
+        assertThat(window.averageObservedDurationMillis()).isGreaterThanOrEqualTo(0);
 
         CompletionMetrics.Window empty = metrics.snapshotAndReset();
         assertThat(empty.completed()).isZero();

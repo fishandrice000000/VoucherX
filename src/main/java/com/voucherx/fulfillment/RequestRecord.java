@@ -11,7 +11,7 @@ import com.voucherx.seckill.model.SeckillOrderMessage;
  * @param requestId
  *                          抢券请求 ID，用于业务幂等和客户端查询
  * @param eventId
- *                          固定事件 ID；重发时保持不变，对应消息的 messageId
+ *                          固定业务事件 ID，账本与消息保持一致，重发时保持不变
  * @param userId
  *                          抢券用户 ID
  * @param voucherId
@@ -50,7 +50,7 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
     }
 
     /**
-     * 根据账本快照构造待发布的订单消息，将 eventId 映射为 messageId。
+     * 根据账本快照构造保持同一业务身份的待发布订单消息。
      * <p>
      * 重发保持 requestId、eventId、用户、活动和布局身份；createdAt 使用意图创建时刻，发布尝试由发送器另行标识。
      *
@@ -73,7 +73,7 @@ public record RequestRecord(String requestId, String eventId, long userId, long 
      * @return 上述持久化身份字段全部一致时为 true
      */
     public boolean matches(SeckillOrderMessage m) {
-        return requestId.equals(m.requestId()) && eventId.equals(m.messageId()) && userId == m.userId()
+        return requestId.equals(m.requestId()) && eventId.equals(m.eventId()) && userId == m.userId()
                 && voucherId == m.voucherId() && epoch == m.epoch() && stockMode.equals(m.stockMode())
                 && Integer.valueOf(startBucketNo).equals(m.startBucketNo())
                 && Integer.valueOf(layoutVersion).equals(m.layoutVersion());

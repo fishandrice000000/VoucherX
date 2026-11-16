@@ -1,6 +1,7 @@
 package com.voucherx.fulfillment;
 
 import com.voucherx.AbstractIntegrationTest;
+import com.voucherx.common.redis.RedisKeys;
 import com.voucherx.seckill.service.SeckillService;
 import com.voucherx.seckill.service.SeckillStockInitializer;
 import org.junit.jupiter.api.Test;
@@ -70,7 +71,7 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
         await().atMost(Duration.ofSeconds(10))
                 .untilAsserted(() -> assertThat(ledger.find(accepted.requestId()).phase()).isEqualTo("SUCCEEDED"));
         assertThat(service.seckill(1L, 1L, "smoke-1").requestId()).isEqualTo(accepted.requestId());
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_voucher_order", Integer.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_purchase_order", Integer.class)).isEqualTo(1);
         assertThat(
                 jdbcTemplate.queryForObject("SELECT stock FROM tb_seckill_voucher WHERE voucher_id=1", Integer.class))
                 .isEqualTo(9);
@@ -146,7 +147,7 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 .isEqualTo("10");
         assertThatThrownBy(() -> persistence.createPurchaseOrder(message))
                 .isInstanceOf(com.voucherx.order.service.OrderBusinessException.class);
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_voucher_order", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_purchase_order", Integer.class)).isZero();
         assertThat(reconciliation.diagnose(accepted.requestId()).action())
                 .isEqualTo(com.voucherx.reconcile.ReconcileDecision.WAIT);
     }
@@ -171,6 +172,8 @@ class DeliveryComponentTest extends AbstractIntegrationTest {
                 com.voucherx.common.redis.RedisKeys.seckillOwners(1L),
                 com.voucherx.common.redis.RedisKeys.seckillRequest(accepted.requestId())));
         assertThat(recovery.recover(1).state()).isEqualTo("NORMAL");
+        assertThat(redisTemplate.opsForHash().get(RedisKeys.seckillRequest(accepted.requestId()), "eventId"))
+                .isEqualTo(old.eventId());
         assertThat(redisTemplate.opsForValue().get(com.voucherx.common.redis.RedisKeys.seckillStock(1L)))
                 .isEqualTo("9");
         assertThatThrownBy(() -> persistence.createPurchaseOrder(old))

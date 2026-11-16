@@ -207,7 +207,7 @@ public interface RecoveryMapper {
      *
      * @return 已发行订单数
      */
-    long countConfirmed(@Param("voucher") long voucher);
+    long countCreatedOrders(@Param("voucher") long voucher);
 
     /**
      * 统计 phase=ACCEPTED 的请求，即恢复计划中的 R。
@@ -219,7 +219,7 @@ public interface RecoveryMapper {
      *
      * @return 已受理且尚未建单的请求数
      */
-    long countReserved(@Param("voucher") long voucher);
+    long countAcceptedRequests(@Param("voucher") long voucher);
 
     /**
      * 按订单 ID 升序游标扫描全部发行订单，重建用户资格及归属。

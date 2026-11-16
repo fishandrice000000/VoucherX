@@ -15,8 +15,8 @@ public class Voucher {
     private String title;
     private String subTitle;
     private String rules;
-    private Long payValue;
-    private Long actualValue;
+    private Long purchasePrice;
+    private Long faceValue;
     private Integer type;
     private Integer status;
     private LocalDateTime createTime;
@@ -62,20 +62,20 @@ public class Voucher {
         this.rules = rules;
     }
 
-    public Long getPayValue() {
-        return payValue;
+    public Long getPurchasePrice() {
+        return purchasePrice;
     }
 
-    public void setPayValue(Long payValue) {
-        this.payValue = payValue;
+    public void setPurchasePrice(Long purchasePrice) {
+        this.purchasePrice = purchasePrice;
     }
 
-    public Long getActualValue() {
-        return actualValue;
+    public Long getFaceValue() {
+        return faceValue;
     }
 
-    public void setActualValue(Long actualValue) {
-        this.actualValue = actualValue;
+    public void setFaceValue(Long faceValue) {
+        this.faceValue = faceValue;
     }
 
     public Integer getType() {

@@ -44,11 +44,11 @@ fi
 
 docker compose exec -T mysql mysql -uvoucherx -pvoucherx "$DB_NAME" 2>/dev/null <<SQL
 SET NAMES utf8mb4;
-DELETE FROM tb_voucher_order WHERE voucher_id = ${voucher_id};
+DELETE FROM tb_purchase_order WHERE voucher_id = ${voucher_id};
 DELETE FROM tb_seckill_voucher_bucket WHERE voucher_id = ${voucher_id};
 DELETE FROM tb_seckill_voucher WHERE voucher_id = ${voucher_id};
 DELETE FROM tb_voucher WHERE id = ${voucher_id};
-INSERT INTO tb_voucher (id, shop_id, title, sub_title, rules, pay_value, actual_value, type, status)
+INSERT INTO tb_voucher (id, shop_id, title, sub_title, rules, purchase_price, face_value, type, status)
 VALUES (${voucher_id}, 1, '压测秒杀券-${voucher_id}', '', '', 100, 1000, 1, 1);
 INSERT INTO tb_seckill_voucher
   (voucher_id, total_stock, stock, stock_mode, bucket_count, layout_version, begin_time, end_time)

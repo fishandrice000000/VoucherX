@@ -24,7 +24,7 @@ import java.util.concurrent.TimeoutException;
 /**
  * 将业务订单消息编码为持久化 AMQP 消息，并返回 Broker 发布确认分类。
  * <p>
- * messageId 使用固定 Outbox eventId，每次发送另建 CorrelationData ID 关联此次确认。
+ * eventId 使用固定 Outbox eventId，每次发送另建 CorrelationData ID 关联此次确认。
  * 应用启用 correlated confirm、publisher returns 和 mandatory，以观察 ACK、NACK 和不可路由退回。
  * <p>
  * 发布器与消费者独立运行：发送器记录确认结果，消费者在 MySQL 建单事务提交后确认交付。
@@ -129,9 +129,9 @@ public class SeckillMessagePublisher {
     }
 
     /**
-     * 将业务消息编码为 JSON 字节，设置 UTF-8、PERSISTENT 投递模式和固定业务 messageId。
+     * 将业务消息编码为 JSON 字节，设置 UTF-8、PERSISTENT 投递模式和固定业务 eventId。
      * <p>
-     * AMQP messageId 与 JSON messageId 均对应同一 Outbox 事件，投递尝试次数保存在数据库事件记录中。
+     * AMQP 标准 messageId 属性承载 JSON 中的 eventId，均对应同一 Outbox 事件；投递尝试次数保存在数据库事件记录中。
      *
      * @param payload
      *                    由持久化请求生成的负载
@@ -145,7 +145,7 @@ public class SeckillMessagePublisher {
         messageProperties.setContentType(MessageProperties.CONTENT_TYPE_JSON);
         messageProperties.setContentEncoding("UTF-8");
         messageProperties.setDeliveryMode(MessageDeliveryMode.PERSISTENT);
-        messageProperties.setMessageId(payload.messageId());
+        messageProperties.setMessageId(payload.eventId());
         byte[] body = objectMapper.writeValueAsBytes(payload);
         return new Message(body, messageProperties);
     }

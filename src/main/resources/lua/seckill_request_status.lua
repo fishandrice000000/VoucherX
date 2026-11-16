@@ -1,7 +1,7 @@
 -- 数据库结果已确定后，只更新 SUCCESS/FAILED；保护已成功和已释放状态。
 -- KEYS[1] 请求状态 Hash
 -- ARGV[1] 目标状态
--- ARGV[2] messageId，空字符串表示不更新
+-- ARGV[2] eventId，空字符串表示不更新
 -- ARGV[3] orderId，空字符串表示不更新
 -- ARGV[4] reason，空字符串表示不更新
 -- 返回 1 表示执行了更新，0 表示状态不存在或被终态保护拒绝。
@@ -35,7 +35,7 @@ end
 
 redis.call('HSET', key, 'status', newStatus)
 if ARGV[2] ~= '' then
-    redis.call('HSET', key, 'messageId', ARGV[2])
+    redis.call('HSET', key, 'eventId', ARGV[2])
 end
 if ARGV[3] ~= '' then
     redis.call('HSET', key, 'orderId', ARGV[3])

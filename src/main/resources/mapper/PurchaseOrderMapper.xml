@@ -3,17 +3,17 @@
 <mapper namespace="com.voucherx.commerce.mapper.PurchaseOrderMapper">
     <select id="terms" resultType="com.voucherx.commerce.model.VoucherTerms" useCache="false">
         <![CDATA[
-        SELECT pay_value, actual_value, shop_id, min_spend, validity_seconds
+        SELECT purchase_price, face_value, shop_id, min_spend, validity_seconds
         FROM tb_voucher
         WHERE id=#{id}
         ]]>
     </select>
     <update id="initialize">
         <![CDATA[
-        UPDATE tb_voucher_order
+        UPDATE tb_purchase_order
         SET payment_status='PENDING_PAYMENT',
-            pay_amount=#{terms.payValue},
-            coupon_face_value=#{terms.actualValue},
+            pay_amount=#{terms.purchasePrice},
+            coupon_face_value=#{terms.faceValue},
             coupon_shop_id=#{terms.shopId},
             coupon_min_spend=#{terms.minSpend},
             coupon_validity_seconds=#{terms.validitySeconds},
@@ -24,20 +24,20 @@
     <select id="selectById" resultType="com.voucherx.commerce.model.PurchaseOrderSnapshot" useCache="false">
         <![CDATA[
         SELECT *
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE id=#{id}
         ]]>
     </select>
     <select id="selectByIdForUpdate" resultType="com.voucherx.commerce.model.PurchaseOrderSnapshot" useCache="false">
         <![CDATA[
         SELECT *
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE id=#{id} FOR UPDATE
         ]]>
     </select>
     <update id="markPaid">
         <![CDATA[
-        UPDATE tb_voucher_order
+        UPDATE tb_purchase_order
         SET payment_status='PAID'
         WHERE id=#{id}
         AND payment_status='PENDING_PAYMENT'
@@ -45,7 +45,7 @@
     </update>
     <update id="cancel">
         <![CDATA[
-        UPDATE tb_voucher_order
+        UPDATE tb_purchase_order
         SET payment_status='CANCELLED'
         WHERE id=#{id}
         AND payment_status='PENDING_PAYMENT'
@@ -54,7 +54,7 @@
     <select id="expiredIds" resultType="long" useCache="false">
         <![CDATA[
         SELECT id
-        FROM tb_voucher_order
+        FROM tb_purchase_order
         WHERE payment_status='PENDING_PAYMENT'
         AND payment_deadline_ms<=#{now}
         ORDER BY payment_deadline_ms

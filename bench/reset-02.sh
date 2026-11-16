@@ -11,7 +11,7 @@ fi
 
 docker compose exec -T mysql mysql -uvoucherx -pvoucherx "$DB_NAME" 2>/dev/null <<'SQL'
 SET FOREIGN_KEY_CHECKS = 0;
-TRUNCATE TABLE tb_voucher_order;
+TRUNCATE TABLE tb_purchase_order;
 TRUNCATE TABLE tb_seckill_voucher_bucket;
 TRUNCATE TABLE tb_seckill_voucher;
 TRUNCATE TABLE tb_voucher;

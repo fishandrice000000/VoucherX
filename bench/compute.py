@@ -119,12 +119,12 @@ def summarize(out_dir):
         return int(match.group(1)) if match else -1
 
     accepted_requests = read_csv_map(out / "accepted_requests.csv", 0, 1)
-    order_completed = read_csv_map(out / "orders.csv", 0, 1)
+    order_insert_started = read_csv_map(out / "orders.csv", 0, 1)
     e2e_db_values = []
     e2e_db_missing = 0
-    if accepted_requests is not None and order_completed is not None:
+    if accepted_requests is not None and order_insert_started is not None:
         for request_id, start in accepted_requests.items():
-            completed = order_completed.get(request_id)
+            completed = order_insert_started.get(request_id)
             if completed is None or int(completed) <= 0:
                 e2e_db_missing += 1
                 continue
@@ -135,7 +135,7 @@ def summarize(out_dir):
             writer = csv.writer(file)
             writer.writerow(["request_id", "e2e_ms"])
             for request_id, start in accepted_requests.items():
-                completed = order_completed.get(request_id)
+                completed = order_insert_started.get(request_id)
                 if completed is not None and int(completed) > 0:
                     writer.writerow([request_id, int(completed) - int(start)])
 
@@ -153,7 +153,7 @@ def summarize(out_dir):
             elif len(parts) >= 4 and parts[1] == "DETAIL":
                 lock_probe_details.append(parts[2:])
 
-    e2e_db_available = accepted_requests is not None and order_completed is not None
+    e2e_db_available = accepted_requests is not None and order_insert_started is not None
     orders = final_int("orders")
     stock_mode_match = re.search(r"^stock_mode\s+(\S+)$", final, re.MULTILINE)
     stock_mode = stock_mode_match.group(1) if stock_mode_match else "SINGLE"
@@ -185,6 +185,7 @@ def summarize(out_dir):
         f"e2e_status_p95_ms={summary_int('e2e_p95_ms')}",
         f"e2e_status_p99_ms={summary_int('e2e_p99_ms')}",
         f"e2e_db_samples={len(e2e_db_values) if e2e_db_available else -1}",
+        "e2e_db_endpoint=insert_started_at_ms",
         f"e2e_db_missing={e2e_db_missing if e2e_db_available else -1}",
         f"e2e_db_p50_ms={percentile(e2e_db_values, 50)}",
         f"e2e_db_p95_ms={percentile(e2e_db_values, 95)}",

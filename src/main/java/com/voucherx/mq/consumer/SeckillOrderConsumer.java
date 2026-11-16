@@ -93,10 +93,10 @@ public class SeckillOrderConsumer {
             SeckillOrderMessage message;
             try {
                 message = mapper.readValue(delivery.getBody(), SeckillOrderMessage.class);
-                if (message == null || message.requestId() == null || message.messageId() == null
+                if (message == null || message.requestId() == null || message.eventId() == null
                         || message.voucherId() == null
                         || message.userId() == null || message.userId() < 1 || message.voucherId() < 1
-                        || message.requestId().isBlank() || message.messageId().isBlank()
+                        || message.requestId().isBlank() || message.eventId().isBlank()
                         || message.epoch() < 1 || message.layoutVersion() == null || message.layoutVersion() < 1
                         || message.startBucketNo() == null || message.startBucketNo() < 0
                         || !("SINGLE".equals(message.stockMode()) || "BUCKET".equals(message.stockMode()))
@@ -154,7 +154,7 @@ public class SeckillOrderConsumer {
             }
             if (results != null) {
                 faults.hit(com.voucherx.recovery.FaultPoint.BATCH_AFTER_COMMIT_BEFORE_ACK,
-                        batch.getFirst().message().requestId(), batch.getFirst().message().messageId());
+                        batch.getFirst().message().requestId(), batch.getFirst().message().eventId());
                 for (int i = 0; i < batch.size(); i++) {
                     if (results.get(i).created())
                         metrics.recordCreated(started);
@@ -205,7 +205,7 @@ public class SeckillOrderConsumer {
             metrics.recordBusinessFailure(started);
             // 身份冲突不能关闭真实请求，也不能覆盖其状态缓存。
             if (ledger.recordBusinessRejection(item.message(), ex.failure().name())) {
-                statuses.markFailed(item.message().requestId(), item.message().messageId(), ex.failure().name());
+                statuses.markFailed(item.message().requestId(), item.message().eventId(), ex.failure().name());
                 channel.basicAck(tag(item.delivery()), false);
             } else
                 channel.basicNack(tag(item.delivery()), false, false);
@@ -220,7 +220,7 @@ public class SeckillOrderConsumer {
             metrics.end();
         }
         faults.hit(com.voucherx.recovery.FaultPoint.ORDER_AFTER_COMMIT_BEFORE_ACK, item.message().requestId(),
-                item.message().messageId());
+                item.message().eventId());
         if (result.created())
             metrics.recordCreated(started);
         else
@@ -244,12 +244,12 @@ public class SeckillOrderConsumer {
      */
     private void cacheResultAndAcknowledge(Item item, PurchaseOrderCreationResult result, Channel channel)
             throws IOException {
-        statuses.markSuccess(item.message().requestId(), item.message().messageId(), result.orderId());
+        statuses.markSuccess(item.message().requestId(), item.message().eventId(), result.orderId());
         channel.basicAck(tag(item.delivery()), false);
     }
 
     /**
-     * 从投递属性取当前通道内的确认标签；它与业务 requestId、messageId 是不同的标识。
+     * 从投递属性取当前通道内的确认标签；它与业务 requestId、eventId 是不同的标识。
      *
      * @param m
      *              AMQP 投递信封

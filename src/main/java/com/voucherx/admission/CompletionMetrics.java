@@ -24,8 +24,8 @@ public class CompletionMetrics {
     private final AtomicLong duplicates = new AtomicLong();
     private final AtomicLong failures = new AtomicLong();
     private final AtomicLong businessFailures = new AtomicLong();
-    private final AtomicLong transactionNanos = new AtomicLong();
-    private final AtomicLong transactionCount = new AtomicLong();
+    private final AtomicLong observedDurationNanos = new AtomicLong();
+    private final AtomicLong observedDurationSampleCount = new AtomicLong();
     private final AtomicInteger inFlight = new AtomicInteger();
     private final AtomicInteger maxInFlight = new AtomicInteger();
 
@@ -104,8 +104,8 @@ public class CompletionMetrics {
         long duplicateCount = duplicates.getAndSet(0);
         long failureCount = failures.getAndSet(0);
         long businessFailureCount = businessFailures.getAndSet(0);
-        long durationNanos = transactionNanos.getAndSet(0);
-        long durationCount = transactionCount.getAndSet(0);
+        long durationNanos = observedDurationNanos.getAndSet(0);
+        long durationCount = observedDurationSampleCount.getAndSet(0);
         int current = inFlight.get();
         int peak = maxInFlight.getAndSet(current);
         return new Window(completedCount, duplicateCount, failureCount, businessFailureCount,
@@ -129,37 +129,37 @@ public class CompletionMetrics {
      */
     private void recordDuration(long startedNanos) {
         long elapsed = Math.max(0, System.nanoTime() - startedNanos);
-        transactionNanos.addAndGet(elapsed);
-        transactionCount.incrementAndGet();
+        observedDurationNanos.addAndGet(elapsed);
+        observedDurationSampleCount.incrementAndGet();
     }
 
     /**
      * 从计数器取走的一个近似窗口，供采集器与外部负载观测组合；并发取值不保证各字段严格同一时刻。
      *
      * @param completed
-     *                             观察到的新建订单数
+     *                                        观察到的新建订单数
      * @param duplicates
-     *                             复用既有订单的结果数
+     *                                        复用既有订单的结果数
      * @param failures
-     *                             暂时性或基础设施异常结果数
+     *                                        暂时性或基础设施异常结果数
      * @param businessFailures
-     *                             明确业务拒绝数，独立于基础设施失败率
-     * @param transactionNanos
-     *                             已记录结果的累计经过纳秒
-     * @param transactionCount
-     *                             累计耗时样本数，批处理时不等于独立事务数
+     *                                        明确业务拒绝数，独立于基础设施失败率
+     * @param observedDurationNanos
+     *                                        已记录结果的累计经过纳秒
+     * @param observedDurationSampleCount
+     *                                        累计耗时样本数，批处理时不等于独立事务数
      * @param inFlight
-     *                             采样时已开始未结束的执行段数
+     *                                        采样时已开始未结束的执行段数
      * @param maxInFlight
-     *                             上个窗口观察到的执行段峰值
+     *                                        上个窗口观察到的执行段峰值
      */
     public record Window(
             long completed,
             long duplicates,
             long failures,
             long businessFailures,
-            long transactionNanos,
-            long transactionCount,
+            long observedDurationNanos,
+            long observedDurationSampleCount,
             int inFlight,
             int maxInFlight) {
         /**
@@ -167,8 +167,9 @@ public class CompletionMetrics {
          *
          * @return 观察耗时平均毫秒数；无样本为 0
          */
-        public double averageTransactionMillis() {
-            return transactionCount == 0 ? 0 : transactionNanos / 1_000_000.0 / transactionCount;
+        public double averageObservedDurationMillis() {
+            return observedDurationSampleCount == 0 ? 0
+                    : observedDurationNanos / 1_000_000.0 / observedDurationSampleCount;
         }
 
         /**
@@ -176,7 +177,7 @@ public class CompletionMetrics {
          *
          * @return 参与该失败比例的结果数
          */
-        public long totalOutcomes() {
+        public long infrastructureOutcomeCount() {
             return completed + duplicates + failures;
         }
     }

@@ -3,11 +3,11 @@ package com.voucherx.seckill.model;
 /**
  * 由持久化请求构造的异步建单消息，主线入口为 RequestRecord.message。
  * <p>
- * messageId 对应固定 Outbox eventId，requestId
+ * eventId 对应固定 Outbox eventId，requestId
  * 标识业务请求；stockMode、startBucketNo、layoutVersion 保存计划布局。
  * epoch 标识活动恢复代次，消费者在建单事务中将消息完整身份与账本、活动配置核对。
  *
- * @param messageId
+ * @param eventId
  *                          固定事件 ID，不是每次发布的 CorrelationData ID
  * @param requestId
  *                          抢券请求 ID
@@ -27,7 +27,7 @@ package com.voucherx.seckill.model;
  *                          请求绑定的恢复代次
  */
 public record SeckillOrderMessage(
-        String messageId,
+        String eventId,
         String requestId,
         Long userId,
         Long voucherId,

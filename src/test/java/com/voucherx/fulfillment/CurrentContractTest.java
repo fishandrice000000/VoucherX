@@ -52,4 +52,21 @@ class CurrentContractTest {
         activity.setBucketCount(0);
         assertThatThrownBy(() -> StockMode.requireLayout(activity)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    /** 建单事件 JSON 与账本保持相同 eventId，反序列化后保留完整业务身份。 */
+    @Test
+    void orderEventJsonPreservesLedgerIdentity() throws Exception {
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        var request = new com.voucherx.fulfillment.RequestRecord("R1", "E1", 1001, 2001,
+                "ACCEPTED", "RESERVED", 1, "SINGLE", 0, 1, null, null, 100, 100);
+        var payload = json.writeValueAsBytes(request.message());
+        var fields = json.readTree(payload);
+        java.util.Set<String> names = new java.util.HashSet<>();
+        fields.fieldNames().forEachRemaining(names::add);
+        assertThat(names).containsExactlyInAnyOrder("eventId", "requestId", "userId", "voucherId",
+                "createdAt", "stockMode", "startBucketNo", "layoutVersion", "epoch");
+        assertThat(fields.get("eventId").asText()).isEqualTo("E1");
+        assertThat(request.matches(json.readValue(payload, com.voucherx.seckill.model.SeckillOrderMessage.class)))
+                .isTrue();
+    }
 }

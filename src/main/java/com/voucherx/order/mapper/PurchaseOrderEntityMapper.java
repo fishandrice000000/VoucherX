@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 /**
- * 秒杀购买订单的基础 Mapper，映射 tb_voucher_order。
+ * 秒杀购买订单的基础 Mapper，映射 tb_purchase_order。
  * <p>
  * insert 等基础方法由 MyBatis-Plus BaseMapper 提供；自增主键回填到 PurchaseOrderEntity.id。
  * 本接口读取建单身份，付款和权益快照的完整视图另见 PurchaseOrderMapper。
@@ -25,7 +25,7 @@ public interface PurchaseOrderEntityMapper extends BaseMapper<PurchaseOrderEntit
      *
      * @return 购买订单；不存在为 null
      */
-    @Select("SELECT * FROM tb_voucher_order WHERE request_id = #{requestId} LIMIT 1")
+    @Select("SELECT * FROM tb_purchase_order WHERE request_id = #{requestId} LIMIT 1")
     PurchaseOrderEntity selectByRequestId(@Param("requestId") String requestId);
 
     /**
@@ -39,7 +39,7 @@ public interface PurchaseOrderEntityMapper extends BaseMapper<PurchaseOrderEntit
      * @return 已有购买订单；不存在为 null
      */
     @Select("""
-            SELECT * FROM tb_voucher_order
+            SELECT * FROM tb_purchase_order
              WHERE voucher_id = #{voucherId} AND user_id = #{userId}
              LIMIT 1
             """)
@@ -54,6 +54,6 @@ public interface PurchaseOrderEntityMapper extends BaseMapper<PurchaseOrderEntit
      *
      * @return 该活动已有订单数
      */
-    @Select("SELECT COUNT(*) FROM tb_voucher_order WHERE voucher_id = #{voucherId}")
+    @Select("SELECT COUNT(*) FROM tb_purchase_order WHERE voucher_id = #{voucherId}")
     long countByVoucherId(@Param("voucherId") Long voucherId);
 }

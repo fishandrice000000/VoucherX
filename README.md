@@ -1,292 +1,229 @@
 # VoucherX
 
-VoucherX 是面向电商及本地生活场景的高并发优惠券与营销权益平台。V1 以经典「黑马点评」优惠券秒杀语义为蓝本，重点实践并发控制、异步消息、事务一致性和可验证的故障边界。
+**面向高并发场景的优惠券与营销权益平台。**
 
-当前仓库已完成 **V1 基线**：手机号验证码登录、商户缓存查询、Redis Lua + RabbitMQ + MySQL 的优惠券秒杀链路，以及使用 Testcontainers 验证的自动化测试。
+VoucherX 基于 Java 21 和 Spring Boot，覆盖抢券、异步建单、付款发券、消费核销与对账补偿。项目采用模块化单体架构，以 Redis、RabbitMQ 和 MySQL 之间的状态协作为主线，实践并发控制、可靠消息与事务一致性。
 
-在此基础上完成了 **技术深化 01 的 MySQL 库存桶实验**：确认并定位了 MySQL 单库存行锁热点，但修正测量与持久化配置后，BUCKET 模式未达到容量 +20% 门槛，且在 400 req/s 下出现一次退化。因此**默认保持 SINGLE，BUCKET 仅作为显式实验能力**；Redis 侧未发现热点，**没有实现 Redis 库存分片**。
+适合学习 Java 后端交易链路与分布式一致性机制。当前提供本地演示环境和模拟支付，不对接真实短信及支付渠道。
 
-**技术深化 02** 已实现本地令牌桶、Redis 共享/活动双层固定限流、有界消费反馈和 AIMD 控制器；默认 `OFF`。已修复拒绝分支重复补充令牌、自适应缺失策略退回永久默认值两个正确性问题；默认持久化下 `OFF` 测得 `R=175 req/s`。修复前的 FIXED/ADAPTIVE 探索数据已作废，三组正式重复待重跑；自适应未通过启用验收。
+[快速开始](#快速开始) · [接口概览](#接口概览) · [测试](#测试) · [源码导航](#源码导航) · [开发与维护](#开发与维护)
 
-**技术深化 03** 已交付持久化请求意图、受理流水与 Outbox、可恢复投递、事务内请求终态校验和默认关闭的有界批量消费。受理语义改为 MySQL 受理/事件事务提交后返回 202，不再等待 Broker Confirm；必填 `Idempotency-Key` 用于原请求重试。已通过单元测试和一条真实组件受理至落库检查，未做性能验收。详见 [03 实现与使用](docs/03/implementation-03.md)。
+## 核心能力
 
-**技术深化 04** 已交付购买付款、用户券、消费订单、并发锁券协议、核销、取消和过期处理；模拟支付默认关闭，新购买订单在建单事务中固定权益并进入待付款状态。见 [04 实现与使用](docs/04/implementation-04.md)。
+- **并发抢券与库存分桶**：Redis Lua 原子完成库存预扣与资格占用，MySQL 条件扣减和唯一约束保障最终库存及购买资格。支持单库存与数据库库存桶，采用稳定路由和有界跨桶尝试；默认使用 `SINGLE`，`BUCKET` 作为实验能力显式配置。
+- **可靠异步下单**：持久化请求意图，以同一事务记录受理流水和 Transactional Outbox；通过扫描重投、Publisher Confirm、路由校验、消费幂等和提交后 ACK 推进建单。支持默认关闭的有界批量处理与失败拆分。
+- **订单与核销闭环**：区分购买订单、用户券、消费订单和核销流水。购买订单保存交易权益快照，付款后发券；消费下单锁定用户券，付款核销，取消或超时关闭时按归属释放。
+- **对账与幂等补偿**：关联请求、预留、事件和订单，按数据库终态决定重投、同步或补偿。先关闭数据库请求，再原子返还 Redis 预留，结合补偿标识与修复审计支持重复执行和中断续作。
 
-**技术深化 05** 已交付请求诊断、有界扫描、数据库关闭屏障、幂等补偿及修复审计。自动对账默认关闭，维护命令见 [05 实现与使用](docs/05/implementation-05.md)，工具入口见 [scripts](scripts/README.md)。
+此外，项目包含验证码登录、商户 Cache Aside 缓存、多级限流与 AIMD 自适应准入、活动冻结与恢复代次屏障。限流与自适应默认关闭；故障注入仅在显式启用时生效。
 
-**技术深化 06** 已交付活动冻结、数据库恢复代次屏障、保留在途受理的库存/资格重建、复流校验与默认关闭的故障注入入口。当前以交付为目标，通过编译、单测及初步组件检查，不代表完整可靠性或性能验收。见 [06 实现与运行](docs/06/implementation-06.md)。
+## 业务流程
 
-生产数据访问已统一为 MyBatis / MyBatis-Plus：受理、Outbox、付款核销、对账补偿与恢复的 SQL 下沉到 Mapper，购买订单、消费订单、用户券等使用类型化结果。事务及锁协议保留；共享格式规则与命令行工具已接入。此前 MyBatis 重构曾通过 36 个单元测试、52 个真实组件集成测试，未执行正式性能压测。详见本地 [重构说明](docs/mybatis-refactor/README.md)。
+```mermaid
+flowchart TD
+    A[用户登录并提交抢券请求] --> B[活动与准入校验]
+    B --> C[MySQL 持久化请求意图]
+    C --> D[Redis Lua 原子预扣]
+    D --> E[MySQL 事务：受理流水 + Outbox]
+    E --> F[返回 requestId，客户端查询进度]
+    E --> G[Outbox Dispatcher 投递 RabbitMQ]
+    G --> H[消费者事务：校验代次与请求终态、扣库存、建购买订单]
+    H --> I[提交后 ACK]
+    H --> J[购买付款 → 发放用户券]
+    J --> K[创建消费订单并锁券]
+    K --> L[付款核销 / 取消释放]
+    C -.-> M[对账：收集请求、预留、事件与订单事实]
+    E -.-> M
+    H -.-> M
+    M --> N[重投 / 状态同步 / 关闭并补偿]
+```
 
-本轮兼容清理验证：40 条单元测试、56 条真实组件集成测试通过；两个千用户争抢用例未执行。覆盖严格 Bearer/幂等键协议、完整消息与门禁、初始化与冻结互斥，以及原有下单、支付核销、补偿恢复链路。
+Redis 预扣与 MySQL 受理之间通过持久化意图和对账衔接。`PROCESSING` 表示受理与 Outbox 已提交；查询返回 `SUCCESS` 表示购买订单已创建，付款、发券和核销是后续步骤。
 
 ## 技术栈
 
-- Java 21、Spring Boot 3.3.5、Maven。
-- MySQL 8、MyBatis-Plus 3.5.9。
-- Redis 7、RabbitMQ 3.13、Spring AMQP。
-- JUnit 5、Spring Boot Test、Testcontainers 1.21.4、Awaitility。
-- 模块化单体，不使用 Spring Cloud，不拆分微服务。
-
-## V1 已实现功能
-
-| 模块 | 已实现内容 |
+| 领域 | 技术 |
 | --- | --- |
-| 用户登录 | 手机号验证码登录、Redis 验证码、随机 Token、登录拦截器、登录态续期、请求结束清理用户上下文、验证码手机号冷却与 IP 频率限制 |
-| 商户查询 | 按 ID 查询、Cache Aside、空值缓存、TTL 随机偏移、热点缓存互斥重建与安全释放锁 |
-| 优惠券秒杀 | Redis Lua 原子预扣、一人一单、RabbitMQ 异步下单、Publisher Confirm、mandatory 路由失败处理、手动 ACK、有界重试、死信队列、MySQL 条件扣库存与唯一约束、异步结果查询 |
-| MySQL 库存桶（方向 01，实验） | 活动级 `SINGLE / BUCKET` 模式、128 桶布局、固定起始桶与有界跨桶尝试、实际桶写入订单、桶编号完整性校验、完整布局校验与安全初始化；未通过启用验收，默认不启用 |
-| 多级限流（方向 02，实验） | `OFF / FIXED / ADAPTIVE` 模式、本地令牌桶、Redis 共享/活动双层令牌桶、策略 TTL、完成 TPS/队列/连接池反馈、AIMD、429/503 拒绝语义；已修复令牌结算/策略缺失问题，正式对照待重跑，默认 `OFF` |
+| 应用 | Java 21、Spring Boot 3.3.5、Maven |
+| 持久化 | MySQL 8、MyBatis-Plus 3.5.9、MyBatis XML |
+| 缓存与原子操作 | Redis 7、Lua |
+| 消息 | RabbitMQ 3.13、Spring AMQP |
+| 测试 | JUnit 5、Testcontainers、Awaitility |
+| 本地环境 | Docker Compose |
 
-支付核销、批量处理、自动对账与补偿已在 03–06 新增，未引入 Redis Stream、Kafka/RocketMQ 或 Redis 库存分片。方向 02 的限流/自适应是默认关闭的实验能力；MySQL 库存桶仅保留为显式配置的实验能力，默认活动继续使用 `SINGLE`。
+## 快速开始
 
-## 核心链路
+需要 JDK 21、Maven 3.6.3+、Docker 和 Docker Compose v2。以下命令在 Bash / Zsh 下执行。
 
-```text
-客户端 → 活动/准入校验 → MySQL 请求意图 → Redis Lua 原子预扣
-       → MySQL 同事务：可靠受理 + Outbox → 返回 202/requestId
-       → Dispatcher：Confirm + 路由校验 + 有界重投
-       → Consumer：事务内活动代次/请求终态检查 + 扣库存 + 购买订单 + 请求成功
-       → 提交后 ACK → 模拟付款发券 → 消费订单锁券 → 付款核销或取消释放
-```
-
-Redis 预扣与 MySQL 受理不是原子事务，持久意图用于扫描窗口。已可靠受理请求发布失败时保留预留并重投/隔离，不直接释放；补偿先以数据库终态屏障关闭请求，再幂等释放。状态查询优先持久化流水和订单，详见 [03](docs/03/implementation-03.md)、[05](docs/05/implementation-05.md)。
-
-## 快速启动
-
-### 1. 启动基础设施
+### 1. 获取代码并启动依赖
 
 ```bash
-docker compose up -d
-```
-
-Compose 端口特意避开常见的 `3306 / 6379 / 5672`：
-
-| 服务 | 宿主机端口 |
-| --- | --- |
-| MySQL 8 | `3307` |
-| Redis 7 | `6380` |
-| RabbitMQ AMQP | `5673` |
-| RabbitMQ 管理台 | `15673`（voucherx / voucherx） |
-
-MySQL 首次启动时会执行 `src/main/resources/db/schema.sql` 和 `seed.sql`，创建一个演示商户与一场 100 库存的秒杀活动。
-
-当前版本只支持全新数据库基线，`schema.sql` 包含全部表、字段和索引，不再提供旧版本增量迁移。已有 Docker 数据卷不会因重启自动升级；请另行准备独立的新环境。本轮清理不会删除、转换本机已有数据或清空消息队列。
-
-接口只接受 `Authorization: Bearer <token>`，抢券必须提供合法的 `Idempotency-Key`。消息必须明确携带库存模式、起始桶、布局版本和恢复代次；缺字段的旧消息会拒绝，查询也不再回退历史订单。
-
-### 2. 启动应用
-
-```bash
+git clone https://github.com/fishandrice000000/VoucherX.git
+cd VoucherX
 cp .env.example .env
+
 set -a
 source .env
 set +a
+
+docker compose up -d --wait
+```
+
+默认本地连接配置如下，完整示例见 [.env.example](.env.example)。
+
+| 服务 | 地址 | 本地演示账号 |
+| --- | --- | --- |
+| MySQL | `localhost:3307`，数据库 `voucherx` | `voucherx / voucherx` |
+| Redis | `localhost:6380` | 无密码 |
+| RabbitMQ AMQP | `localhost:5673` | `voucherx / voucherx` |
+| RabbitMQ 管理台 | `http://localhost:15673` | `voucherx / voucherx` |
+
+首次创建 MySQL 数据卷时自动执行 [schema.sql](src/main/resources/db/schema.sql) 和 [seed.sql](src/main/resources/db/seed.sql)，生成商户 `1` 与库存为 `100` 的演示秒杀活动 `1`。活动库存与门禁由应用启动时初始化。
+
+数据库使用全新建库脚本；已有数据卷不会随重启更新表结构。需要独立演示环境时，请使用新的数据库与配套 Redis、消息状态。
+
+### 2. 启动应用
+
+在加载上述环境变量的终端执行：
+
+```bash
 mvn spring-boot:run
 ```
 
-默认地址为 `http://localhost:8080`。`AUTH_EXPOSE_CODE=true` 只用于本地开发，会把模拟验证码返回在接口响应中；生产环境必须保持为 `false`。
-
-也可以先打包后运行：
+应用地址为 `http://localhost:8080`。也可打包运行：
 
 ```bash
 mvn -DskipTests package
 java -jar target/voucherx-0.1.0-SNAPSHOT.jar
 ```
 
-### 3. 手工验证
+`.env.example` 设置了 `AUTH_EXPOSE_CODE=true`，用于在本地响应中获取模拟验证码。部署环境应关闭验证码回显，并配置独立凭据。
+
+### 3. 走通抢券流程
 
 ```bash
-# 商户查询（公开接口）
+# 查询演示商户
 curl http://localhost:8080/api/shops/1
 
-# 发送验证码（本地开发会返回 code）
+# 申请验证码，从响应 data.code 取值
 curl -X POST http://localhost:8080/api/auth/code \
   -H 'Content-Type: application/json' \
   -d '{"phone":"13900000001"}'
 
-# 登录，替换 <code>
+# 替换 <code>，从响应 data.token 取得登录 Token
 curl -X POST http://localhost:8080/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"phone":"13900000001","code":"<code>"}'
 
-# 秒杀，替换 <token>
+# 替换 <token>，保存响应 data.requestId
 curl -i -X POST http://localhost:8080/api/seckill/vouchers/1 \
   -H 'Authorization: Bearer <token>' \
-  -H 'Idempotency-Key: buy-1-user-1'
+  -H 'Idempotency-Key: demo-purchase-1'
 
-# 查询异步结果，替换 <token> 和 <requestId>
-curl http://localhost:8080/api/seckill/requests/<requestId> \
+# 查询建单结果；SUCCESS 时 data.orderId 是购买订单 ID
+curl 'http://localhost:8080/api/seckill/requests/<requestId>' \
   -H 'Authorization: Bearer <token>'
 ```
 
-## 接口概览
+同一次抢券重试需复用 `Idempotency-Key`，取值为 1–64 位字母、数字或 `._:-`。异步结果包括 `UNKNOWN`、`PROCESSING`、`SUCCESS` 和 `FAILED`；`UNKNOWN` 表示中间结果待核对，可继续查询。
 
-| 方法 | 路径 | 认证 | 说明 |
-| --- | --- | --- | --- |
-| `POST` | `/api/auth/code` | 否 | 发送模拟验证码，带手机号冷却与 IP 限流 |
-| `POST` | `/api/auth/login` | 否 | 验证码登录，返回随机 Token |
-| `GET` | `/api/auth/me` | 是 | 查询当前用户，并刷新 Token TTL |
-| `POST` | `/api/auth/logout` | 是 | 删除登录态 |
-| `GET` | `/api/shops/{shopId}` | 否 | 查询商户详情，使用 Redis 缓存 |
-| `POST` | `/api/seckill/vouchers/{voucherId}` | 是 | 必填 `Idempotency-Key`，受理后返回 `202` 与 `requestId` |
-| `GET` | `/api/seckill/requests/{requestId}` | 是 | 查询异步处理状态，仅请求所有者可查 |
-| `POST` | `/api/consumption-orders` | 是 | 使用本人券创建消费订单并锁券 |
-| `GET` | `/api/coupons` | 是 | 本人用户券游标分页 |
-| `GET` | `/api/orders/{kind}/{id}` | 是 | 本人购买/消费订单 |
-| `POST` | `/api/orders/{kind}/{id}/cancel` | 是 | 取消未付款订单 |
-| `POST` | `/api/payments/simulate` | 是 | 默认关闭的模拟付款，kind 为 PURCHASE/CONSUMPTION |
+### 4. 体验付款与核销
 
-异步状态：
+启动应用前执行 `export PAYMENT_SIMULATION_ENABLED=true` 即可启用模拟支付。演示券售价为 `1000` 分，面值为 `10000` 分；所有金额均使用整数分。
 
-- `PROCESSING`：MySQL 已可靠受理并记录 Outbox，尚未形成最终订单；不代表消息已经确认进入 RabbitMQ。
-- `SUCCESS`：MySQL 已存在已提交的订单，返回 `orderId`。
-- `FAILED`：已确定失败的请求，例如数据库库存不足、重复用户、重试耗尽。
-- `UNKNOWN`：请求意图已持久化，但预留/受理结果暂时无法确定，保留 requestId 供查询或通过同一幂等键重试。
-- 活动未开始、库存不足等确定拒绝返回同步错误。消息投递未知与请求受理未知分开保存；已可靠受理后的投递问题不撤销受理。
+```bash
+# 替换 <purchaseOrderId> 与 <token>，购买付款后生成用户券
+curl -X POST http://localhost:8080/api/payments/simulate \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"orderKind":"PURCHASE","orderId":<purchaseOrderId>,"eventId":"demo-pay-1","amount":1000,"success":true}'
 
-统一响应格式：
+# 查询本人用户券，取列表中用户券的 id
+curl 'http://localhost:8080/api/coupons?after=0&size=20' \
+  -H 'Authorization: Bearer <token>'
 
-```json
-{"code":0,"message":"OK","data":{}}
+# 替换 <couponId>；创建消费订单并锁券
+curl -X POST http://localhost:8080/api/consumption-orders \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"shopId":1,"couponId":<couponId>,"originalAmount":15000}'
 ```
 
-业务错误同时使用合适的 HTTP 状态码与稳定的业务 `code`。
+查询 `GET /api/orders/CONSUMPTION/<orderId>` 可查看服务端计算的 `pay_amount`。随后向模拟支付接口提交 `orderKind=CONSUMPTION`、该订单 ID、独立 `eventId` 和应付金额即可核销；同一支付事件重试应复用其 `eventId` 与原始参数。
+
+## 接口概览
+
+受保护接口统一使用 `Authorization: Bearer <token>`。响应结构为 `{"code":0,"message":"OK","data":...}`；业务错误同时提供 HTTP 状态码和业务错误码。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/api/auth/code` | 申请验证码，公开接口 |
+| `POST` | `/api/auth/login` | 验证码登录，公开接口 |
+| `GET` | `/api/auth/me` | 当前用户 |
+| `POST` | `/api/auth/logout` | 退出登录 |
+| `GET` | `/api/shops/{shopId}` | 商户查询，公开接口 |
+| `POST` | `/api/seckill/vouchers/{voucherId}` | 提交抢券，必填幂等键，返回 HTTP 202 |
+| `GET` | `/api/seckill/requests/{requestId}` | 本人抢券请求进度 |
+| `GET` | `/api/orders/{kind}/{id}` | 本人订单，类型为 `PURCHASE` / `CONSUMPTION` |
+| `POST` | `/api/orders/{kind}/{id}/cancel` | 取消待付款订单 |
+| `GET` | `/api/coupons` | 本人用户券，`after` / `size` 游标分页 |
+| `POST` | `/api/consumption-orders` | 使用用户券创建消费订单 |
+| `POST` | `/api/payments/simulate` | 模拟付款，需显式启用 |
+
+## 配置
+
+应用配置见 [application.yml](src/main/resources/application.yml)。常用开关：
+
+| 环境变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `AUTH_EXPOSE_CODE` | `false` | 验证码回显；配置示例在本地启用 |
+| `DELIVERY_ENABLED` | `true` | Outbox 后台投递 |
+| `DELIVERY_BATCH_ENABLED` | `false` | 有界批量消费 |
+| `PAYMENT_SIMULATION_ENABLED` | `false` | 模拟支付接口 |
+| `RECONCILE_ENABLED` | `false` | 自动对账与修复扫描 |
+| `ADMISSION_MODE` | `OFF` | 准入模式：`OFF` / `FIXED` / `ADAPTIVE` |
+| `FAULT_INJECTION_ENABLED` | `false` | 故障注入 |
 
 ## 测试
 
-交付开发可使用 `mvn -Punit test`，只运行不依赖外部组件的单元测试；
-`mvn -Pintegration test` 运行真实组件测试，原有 `mvn test` 仍执行全部测试。
-`mvn -DskipTests package` 编译生产及测试源码并打包，不运行测试。
-
 ```bash
+# 不依赖外部组件的单元测试
+mvn -Punit test
+
+# 真实 MySQL / Redis / RabbitMQ 组件测试，需要 Docker
+mvn -Pintegration -Dtest=DeliveryComponentTest test
+
+# 全部测试，包含并发争抢与故障相关用例，需要 Docker
 mvn test
 ```
 
-此前 03–06 交付记录：36 个单元测试通过；真实 MySQL/Redis/RabbitMQ 下的 6 条功能/恢复/维护 CLI 组件检查通过和 9 个针对性兼容回归。没有执行两个千用户争抢用例、耗时压测、真实进程强杀或完整故障矩阵；该段条数为历史记录；当前兼容清理回归结果见本文开头。
+Testcontainers 为集成测试创建独立组件。测试覆盖请求幂等、可靠投递、交易核销、补偿和恢复等路径。压测工具与实验方法见 [bench/README.md](bench/README.md)；本 README 不提供当前版本的性能承诺，库存桶与自适应策略的收益需要在目标环境验证。
+
+## 源码导航
+
+| 路径 | 职责 |
+| --- | --- |
+| [auth](src/main/java/com/voucherx/auth) / [shop](src/main/java/com/voucherx/shop) | 登录认证与商户缓存 |
+| [voucher](src/main/java/com/voucherx/voucher) / [seckill](src/main/java/com/voucherx/seckill) | 券与秒杀配置、入口校验、库存预扣、结果查询 |
+| [fulfillment](src/main/java/com/voucherx/fulfillment) / [mq](src/main/java/com/voucherx/mq) | 持久受理、Outbox 投递与消息消费 |
+| [order](src/main/java/com/voucherx/order) / [commerce](src/main/java/com/voucherx/commerce) | 购买建单、付款发券、消费锁券与核销 |
+| [reconcile](src/main/java/com/voucherx/reconcile) | 请求诊断、重投、补偿与审计 |
+| [admission](src/main/java/com/voucherx/admission) / [recovery](src/main/java/com/voucherx/recovery) | 准入控制、活动冻结与状态重建 |
+| [db](src/main/resources/db) / [mapper](src/main/resources/mapper) / [lua](src/main/resources/lua) | 建库、业务 SQL、Redis 原子脚本 |
+| [tests](src/test/java/com/voucherx) | 单元测试与组件集成测试 |
+| [scripts](scripts/README.md) / [bench](bench/README.md) | 格式化、维护与性能实验工具 |
+
+## 开发与维护
+
+生产 MySQL 数据访问统一通过 MyBatis / MyBatis-Plus Mapper，事务边界保留在服务层。修改持久化逻辑时，应保留加锁顺序、条件更新、幂等与恢复代次校验。
+
+Java 格式化使用共享的 [Eclipse Formatter 配置](java-formatter.xml)：
 
 ```bash
-mvn -Punit clean package
-mvn -Dtest=DeliveryComponentTest test
+python3 scripts/format-java.py path/to/ChangedFile.java
+python3 scripts/format-java.py --check path/to/ChangedFile.java
 ```
 
-新组件检查覆盖受理至落库、幂等键、付款发券/锁券/取消/核销、一次有效补偿、旧代次阻止、重建发布中断续作和本地维护入口。模拟支付、批量、自动对账和故障注入均默认关闭；配置见 application.yml 与 .env.example。
+脚本调用已安装的 VS Code Red Hat Java 扩展内置 Formatter。编辑器设置 `java.format.settings.url=java-formatter.xml`、`java.format.settings.profile=VoucherX` 即可使用同一规则。
 
-## 关键设计
-
-- **Redis 预扣**：Lua 脚本集中管理，原子完成库存检查、资格占用、扣库存和请求状态写入。
-- **MySQL 最终防线**：`UPDATE ... WHERE stock > 0` 加条件扣库存；`(voucher_id, user_id)` 唯一约束保证一人一单；`request_id` 唯一约束保证请求幂等。
-- **消息成功定义**：只有 Publisher Confirm 为 ACK 且 mandatory 消息成功路由，才算投递成功。
-- **ACK 时机**：消费者仅在 MySQL 事务提交成功、已处理的幂等重复、或持久化终态已确定后 ACK；临时失败通过持久事件安排有界重试，耗尽后隔离，不伪造最终失败。
-- **状态查询**：优先读取 MySQL 持久化请求流水，不存在账本时返回请求不存在；Redis 仅保留过程/预留信息，不把未知状态报告为成功或失败。
-- **库存初始化**：初始化在活动控制行独占锁内读取配置，先显式建立门禁，再对“无订单、无未结请求且库存未消费”的活动做 `SETNX`；已有库存却门禁缺失或不一致时拒绝自动修复；Redis 库存缺失但已有历史订单时拒绝自动重建，暂停该活动受理。BUCKET 模式按桶额度和校验布局后初始化。
-- **MySQL 桶模式（实验）**：用户稳定路由到起始桶 `userId % bucketCount`，消费者校验桶编号完整覆盖并尝试后续桶；实际扣减桶写入订单。Redis 仍为单库存 Key；未通过启用验收，默认 `SINGLE`。
-- **发布与状态**：发布器依赖 Spring AMQP 的 `CorrelationData.getReturned()` 判定 mandatory 路由失败，不再额外等待 100ms；请求状态使用条件 Lua 转移，迟到状态不能覆盖 `SUCCESS / FAILED / RELEASED`。
-
-## 目录结构
-
-```text
-src/main/java/com/voucherx/
-├── auth/        # 验证码、登录、Token 拦截器、用户上下文
-├── shop/        # 商户查询与 Cache Aside 缓存
-├── seckill/     # 秒杀编排、Redis Lua 预扣、请求状态
-├── voucher/     # 优惠券与秒杀活动模型
-├── order/       # MySQL 订单事务与幂等
-├── mq/          # RabbitMQ 拓扑、发布器、消费者
-├── fulfillment/ # 持久化受理、Outbox、批量消费配置
-├── commerce/    # 模拟支付、用户券、锁券核销与取消
-├── reconcile/   # 请求诊断、扫描、幂等补偿与审计
-├── recovery/    # 活动代次、冻结重建、故障注入
-├── maintenance/ # 本地维护 CLI
-├── common/      # 统一响应、错误码、Redis Key
-└── config/      # 配置属性、拦截器注册、Lua 脚本注册
-
-src/main/resources/
-├── application.yml
-├── db/          # MySQL 表结构、演示数据、增量迁移
-├── mapper/      # MyBatis XML、条件更新与查询映射
-└── lua/         # 秒杀预扣/释放/状态、验证码、缓存锁脚本
-
-src/test/java/com/voucherx/
-├── auth/        # 登录集成测试
-├── shop/        # 缓存集成测试
-└── seckill/     # 秒杀、并发、分桶与消息可靠性测试
-
-bench/            # 压测客户端、数据准备、快照、采样与结果汇总脚本
-```
-
-## 方向 01 压测摘要
-
-修正后的正式对照使用清空后的独立数据、200k 用户、1,000,000 库存、8 消费者、开环负载、30s 预热 + 120s 测量 × 3 次；端到端延迟对全部受理请求与数据库完成时间做批量关联，并使用独立低频锁探测，避免采样干扰 MySQL。
-
-### 共同可持续速率 200 req/s（中位数）
-
-| 指标 | SINGLE | BUCKET 128 |
-| --- | ---: | ---: |
-| 成功订单 TPS | 199.08 | 198.47 |
-| HTTP P99 | 12ms | 11ms |
-| 数据库端到端 P99 | 14ms | 14ms |
-| 最大积压 | 2 | 3 |
-| 行锁等待 | 605 | 0 |
-| 库存守恒 | 1,000,000 | 1,000,000 |
-
-### 400 req/s（中位数）
-
-| 指标 | SINGLE | BUCKET 128 |
-| --- | ---: | ---: |
-| 成功订单 TPS | 399.23 | 397.02 |
-| HTTP P99 | 92ms | 30ms |
-| 数据库端到端 P99 | 961ms | 1,003ms |
-| 最大积压 | 434 | 408（一次 4,302） |
-| 行锁等待 | 48,350 | 0 |
-
-结论：
-
-- 容量提升为 `-0.55%`，未达到 +20%；BUCKET 有一次明显退化，重复性也未通过。
-- 单库存行锁热点已定位到 `tb_seckill_voucher.PRIMARY` 的具体活动记录，但在统一放宽持久化配置下不是最终吞吐瓶颈。
-- 早期默认持久化下“232 vs 398、+71.5%”属于未满足相同积压约束、端到端采样不完整的初步观察，不作为验收依据。
-- 因此不默认启用 BUCKET；Redis 分片未启用。完整协议、持久化配置差异、原始数据与限制见 [方向 01 压测报告](docs/01/benchmark-01.md)。
-
-## 文档
-
-`docs/` 按项目约定仅保留在本地，不纳入 Git；从 Git 克隆的仓库不包含这些文件。
-
-- [文档目录](docs/README.md)
-- [V1 文档目录](docs/v1/README.md)
-- [架构说明](docs/v1/architecture.md)
-- [数据模型](docs/v1/data-model.md)
-- [秒杀链路](docs/v1/seckill-flow.md)
-- [RabbitMQ 可靠性](docs/v1/rabbitmq-reliability.md)
-- [测试说明](docs/v1/testing.md)
-- [已知限制](docs/v1/known-limitations.md)
-- [后续演进](docs/v1/future-evolution.md)
-- [技术深化方向](docs/technical-directions.md)
-- [方向 01 文档目录](docs/01/README.md)
-- [方向 01 设计](docs/01/design-01.md)
-- [方向 01 压测](docs/01/benchmark-01.md)
-- [方向 01 测试](docs/01/testing-01.md)
-- [方向 01 限制](docs/01/limitations-01.md)
-- [方向 02 文档目录](docs/02/README.md)
-- [方向 02 设计](docs/02/design-02.md)
-- [方向 02 测试](docs/02/testing-02.md)
-- [方向 02 实验协议](docs/02/benchmark-02.md)
-- [方向 02 限制](docs/02/limitations-02.md)
-- [Git 提交规范](docs/git-conventions.md)
-
-## 开发约定
-
-开发前阅读 [AGENTS.md](AGENTS.md) 与本地 Git 提交规范。
-
-- 生产 MySQL 访问统一使用 Mapper，业务层保留事务边界，数据访问规范见 [AGENTS.md](AGENTS.md#数据访问规范)。
-- 文档变更需同步维护所在目录的 README，新增文档子目录需补充父目录入口。
-- Java 代码格式遵循 [AGENTS.md](AGENTS.md#java-代码格式规范)：命令行与编辑器共用项目 Formatter 配置，所有新增或修改的 Java 文件提交前必须统一格式化。
-- 共享配置为 [java-formatter.xml](java-formatter.xml)，命令行入口见 [scripts](scripts/README.md)。VS Code 设置 `java.format.settings.url` 为 `java-formatter.xml`、`java.format.settings.profile` 为 `VoucherX`；本地 `.vscode/` 继续忽略。
-- 每个独立、可验证的工作单元完成后创建本地提交，使用 Conventional Commits，英文 Type / Scope 配合中文描述。
-- 只提交当前任务相关修改，保护已有工作；不得擅自推送或重写历史。
-- 功能状态以实际代码与验证结果为准，区分已验证、未验证与尚未实现。
-
-### 数据与事件命名
-
-购买订单保存在 `tb_purchase_order`，固定业务事件统一使用 `eventId`（SQL／订单 JSON 为 `event_id`）；插单前观测时间为 `insertStartedAtMs`（SQL／订单 JSON 为 `insert_started_at_ms`）。券模板使用 `purchase_price` 与 `face_value`。运行和压测使用全新数据库表、Redis 状态和消息数据。
-
-对账修复回执按动作结果表达：`SYNC_ATTEMPTED` 为已尝试同步缓存，`REDELIVERY_SCHEDULED` 为已安排事件重投，`EVENT_QUARANTINED` 为预算耗尽后已隔离，`STATE_CHANGED` 为状态已变化。
+本地维护入口提供请求诊断、修复、补偿及活动冻结恢复，使用方法见 [scripts/README.md](scripts/README.md)。提交使用 Conventional Commits，英文 Type / Scope 配合中文描述；提交前运行相关测试并检查差异。
